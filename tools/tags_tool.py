@@ -11,6 +11,7 @@ import subprocess
 import os
 from typing import List
 from tools.registry import ToolRegistry
+import sys
 
 
 def _get_global_config() -> dict:
@@ -38,28 +39,41 @@ class TagsTool:
     commands = {
         "go_to_def": {
             "description": "跳转到符号定义处",
-            "usage": "go_to_def <symbol>",
-            "examples": [
-                "go_to_def main",
-                "go_to_def open_file",
-                "go_to_def struct_name",
-            ],
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "symbol": {
+                        "type": "string",
+                        "description": "要查找定义的符号名",
+                    },
+                },
+                "required": ["symbol"],
+            },
         },
         "find_refs": {
             "description": "查找符号的所有引用",
-            "usage": "find_refs <symbol>",
-            "examples": [
-                "find_refs main",
-                "find_refs open_file",
-            ],
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "symbol": {
+                        "type": "string",
+                        "description": "要查找引用的符号名",
+                    },
+                },
+                "required": ["symbol"],
+            },
         },
         "list_symbols": {
             "description": "列出索引中的符号",
-            "usage": "list_symbols [pattern]",
-            "examples": [
-                "list_symbols",
-                "list_symbols open",
-            ],
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string",
+                        "description": "过滤模式（可选）",
+                    },
+                },
+            },
         },
     }
 
@@ -86,7 +100,8 @@ class TagsTool:
         else:
             return "不可用（请先运行 scripts/build_index.py）"
 
-    def execute(self, command: str, args: str) -> str:
+    def execute(self, command: str, args: dict) -> str:
+        """执行命令，接收参数字典"""
         if command == "go_to_def":
             return self._go_to_def(args)
         elif command == "find_refs":
@@ -96,11 +111,14 @@ class TagsTool:
         else:
             return f"错误：未知命令 '{command}'"
 
+
     def _check_index_exists(self) -> bool:
         """检查索引文件是否存在"""
         project_path = self._get_project_path()
         tags_file = os.path.join(project_path, "tags")
         cscope_file = os.path.join(project_path, "cscope.out")
+        if _get_global_config().get("debug", True):
+            print(f"[DEBUG] Checking index files: tags_file={tags_file}, cscope_file={cscope_file}", file=sys.stderr)
         return os.path.exists(tags_file) or os.path.exists(cscope_file)
 
     def _parse_tags(self, symbol: str) -> List[dict]:
@@ -187,13 +205,14 @@ class TagsTool:
             result = subprocess.run(
                 cscope_cmd,
                 capture_output=True,
-                text=True,
                 timeout=30,
                 cwd=cscope_dir,
             )
 
-            if result.returncode == 0 and result.stdout:
-                for line in result.stdout.strip().split("\n"):
+            # 手动解码，处理编码错误
+            stdout = result.stdout.decode('utf-8', errors='replace')
+            if result.returncode == 0 and stdout:
+                for line in stdout.strip().split("\n"):
                     if not line:
                         continue
 
@@ -221,11 +240,11 @@ class TagsTool:
 
         return results
 
-    def _go_to_def(self, args: str) -> str:
+    def _go_to_def(self, args: dict) -> str:
         """跳转到符号定义"""
-        symbol = args.strip()
+        symbol = args.get("symbol", "")
         if not symbol:
-            return "错误：用法 go_to_def <symbol>"
+            return "错误：缺少 symbol 参数"
 
         # 检查索引是否存在
         if not self._check_index_exists():
@@ -258,11 +277,11 @@ class TagsTool:
 
         return "\n".join(output_lines)
 
-    def _find_refs(self, args: str) -> str:
+    def _find_refs(self, args: dict) -> str:
         """查找符号的所有引用"""
-        symbol = args.strip()
+        symbol = args.get("symbol", "")
         if not symbol:
-            return "错误：用法 find_refs <symbol>"
+            return "错误：缺少 symbol 参数"
 
         # 检查索引是否存在
         if not self._check_index_exists():
@@ -308,9 +327,9 @@ class TagsTool:
 
         return "\n".join(output_lines)
 
-    def _list_symbols(self, args: str) -> str:
+    def _list_symbols(self, args: dict) -> str:
         """列出索引中的符号"""
-        pattern = args.strip() if args.strip() else None
+        pattern = args.get("pattern")
         project_path = self._get_project_path()
         tags_file = os.path.join(project_path, "tags")
 

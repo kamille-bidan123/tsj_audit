@@ -80,6 +80,10 @@ class Config(BaseSettings):
         default="civetweb",
         description="攻击面类型"
     )
+    max_turns: int = Field(
+        default=50,
+        description="审计最大轮数"
+    )
 
     # 命令行参数（用于传递 argparse 解析结果）
     _cli_args: dict | None = None

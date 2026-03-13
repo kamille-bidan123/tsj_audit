@@ -33,26 +33,53 @@ class FileTool:
     commands = {
         "read_file": {
             "description": "读取文件内容，支持指定行范围",
-            "usage": "read_file <path>[:<start>-<end>]",
-            "examples": [
-                "read_file main.py",
-                "read_file open.c:1-20",
-                "read_file config.json:10-50",
-            ],
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "文件路径，相对于项目根目录",
+                    },
+                    "start": {
+                        "type": "integer",
+                        "description": "起始行号（可选）",
+                    },
+                    "end": {
+                        "type": "integer",
+                        "description": "结束行号（可选）",
+                    },
+                },
+                "required": ["path"],
+            },
         },
         "list_dir": {
             "description": "列出目录内容",
-            "usage": "list_dir [path]",
-            "examples": ["list_dir .", "list_dir /src", "list_dir"],
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "目录路径（可选，默认为当前目录）",
+                    },
+                },
+            },
         },
         "search_code": {
             "description": "在文件中搜索代码关键字",
-            "usage": "search_code <pattern> [path]",
-            "examples": [
-                "search_code \"def login\" .",
-                "search_code \"TODO\" src/",
-                "search_code \"vulnerability\"",
-            ],
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string",
+                        "description": "搜索模式/关键字",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "搜索路径（可选，默认为当前目录）",
+                    },
+                },
+                "required": ["pattern"],
+            },
         },
     }
 
@@ -60,7 +87,8 @@ class FileTool:
         """获取全局配置"""
         return _get_global_config()
 
-    def execute(self, command: str, args: str) -> str:
+    def execute(self, command: str, args: dict) -> str:
+        """执行命令，接收参数字典"""
         if command == "read_file":
             return self._read_file(args)
         elif command == "list_dir":
@@ -77,15 +105,13 @@ class FileTool:
         project_path = self._get_config().get("project_path", ".")
         return os.path.join(project_path, path)
 
-    def _read_file(self, args: str) -> str:
-        # 解析 path:line_start-line_end
-        match = re.match(r"^(.+?)(?::(\d+)-(\d+))?$", args.strip())
-        if not match:
-            return f"错误：无效的参数格式 '{args}'"
+    def _read_file(self, args: dict) -> str:
+        path = args.get("path", "")
+        start = args.get("start")
+        end = args.get("end")
 
-        path = match.group(1)
-        start = int(match.group(2)) if match.group(2) else None
-        end = int(match.group(3)) if match.group(3) else None
+        if not path:
+            return "错误：缺少 path 参数"
 
         full_path = self._resolve_path(path)
 
@@ -107,8 +133,8 @@ class FileTool:
 
         return content or "(文件为空)"
 
-    def _list_dir(self, args: str) -> str:
-        path = args.strip() if args.strip() else "."
+    def _list_dir(self, args: dict) -> str:
+        path = args.get("path", ".")
         full_path = self._resolve_path(path)
 
         try:
@@ -119,18 +145,14 @@ class FileTool:
         except Exception as e:
             return f"错误：{e}"
 
-    def _search_code(self, args: str) -> str:
+    def _search_code(self, args: dict) -> str:
         """搜索代码关键字"""
-        try:
-            parts = shlex.split(args)
-        except ValueError:
-            parts = args.split()
+        pattern = args.get("pattern", "")
+        search_path = args.get("path", ".")
 
-        if not parts:
-            return "错误：用法 search_code <pattern> [path]"
+        if not pattern:
+            return "错误：缺少 pattern 参数"
 
-        pattern = parts[0]
-        search_path = parts[1] if len(parts) > 1 else "."
         full_path = self._resolve_path(search_path)
 
         # 优先尝试 rg (ripgrep)
@@ -138,11 +160,12 @@ class FileTool:
             result = subprocess.run(
                 ["rg", "--ignore-case", "--color=never", pattern, full_path],
                 capture_output=True,
-                text=True,
                 timeout=30,
             )
-            if result.stdout.strip():
-                return result.stdout.strip()
+            # 手动解码，处理编码错误
+            output = result.stdout.decode('utf-8', errors='replace').strip()
+            if output:
+                return output
         except (FileNotFoundError, subprocess.TimeoutExpired):
             pass
 
@@ -151,11 +174,11 @@ class FileTool:
             result = subprocess.run(
                 ["grep", "-ri", "--color=never", pattern, full_path],
                 capture_output=True,
-                text=True,
                 timeout=30,
             )
-            if result.stdout.strip():
-                return result.stdout.strip()
+            output = result.stdout.decode('utf-8', errors='replace').strip()
+            if output:
+                return output
         except subprocess.TimeoutExpired:
             return "错误：搜索超时"
         except Exception as e:

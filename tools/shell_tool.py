@@ -71,42 +71,65 @@ class ShellTool:
     commands = {
         "run_command": {
             "description": "执行系统 shell 命令（临时 session，执行完关闭）",
-            "usage": "run_command <command>",
-            "examples": [
-                "run_command ls -la",
-                "run_command git status",
-                "run_command python test.py",
-            ],
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "description": "要执行的 shell 命令",
+                    },
+                },
+                "required": ["command"],
+            },
         },
         "create_session": {
             "description": "创建新的 shell session",
-            "usage": "create_session [name]",
-            "examples": [
-                "create_session",
-                "create_session build_session",
-            ],
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "session 名称（可选）",
+                    },
+                },
+            },
         },
         "session_exec": {
             "description": "在指定 session 中执行命令",
-            "usage": "session_exec <session_id> <command>",
-            "examples": [
-                "session_exec abc123 cd /app/src",
-                "session_exec abc123 python build.py",
-            ],
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "session_id": {
+                        "type": "string",
+                        "description": "session ID",
+                    },
+                    "command": {
+                        "type": "string",
+                        "description": "要执行的命令",
+                    },
+                },
+                "required": ["session_id", "command"],
+            },
         },
         "close_session": {
             "description": "关闭指定的 session",
-            "usage": "close_session <session_id>",
-            "examples": [
-                "close_session abc123",
-            ],
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "session_id": {
+                        "type": "string",
+                        "description": "要关闭的 session ID",
+                    },
+                },
+                "required": ["session_id"],
+            },
         },
         "list_sessions": {
             "description": "列出所有活跃的 session",
-            "usage": "list_sessions",
-            "examples": [
-                "list_sessions",
-            ],
+            "parameters": {
+                "type": "object",
+                "properties": {},
+            },
         },
     }
 
@@ -114,7 +137,8 @@ class ShellTool:
         """每次执行时获取最新配置"""
         return _get_global_config()
 
-    def execute(self, command: str, args: str) -> str:
+    def execute(self, command: str, args: dict) -> str:
+        """执行命令，接收参数字典"""
         if command == "run_command":
             return self._run_command(args)
         elif command == "create_session":
@@ -128,26 +152,31 @@ class ShellTool:
         else:
             return f"错误：未知命令 '{command}'"
 
-    def _run_command(self, args: str) -> str:
+
+    def _run_command(self, args: dict) -> str:
         """执行临时命令（一次性 session）"""
+        cmd = args.get("command", "")
+        if not cmd:
+            return "错误：缺少 command 参数"
+
         config = self._get_config()
         container_id = config.get("docker_container") or config.get("container_id")
         project_path = config.get("project_path", ".")
 
         if container_id:
             # Docker 模式
-            cmd = f"docker exec {container_id} bash -c '{args}'"
+            shell_cmd = f"docker exec {container_id} bash -c '{cmd}'"
             try:
                 result = subprocess.run(
-                    cmd,
+                    shell_cmd,
                     shell=True,
                     capture_output=True,
-                    text=True,
                     timeout=30,
                 )
-                output = result.stdout
-                if result.stderr:
-                    output += "\n" + result.stderr
+                output = result.stdout.decode('utf-8', errors='replace')
+                stderr = result.stderr.decode('utf-8', errors='replace')
+                if stderr:
+                    output += "\n" + stderr
                 return output.strip() or "(无输出)"
             except subprocess.TimeoutExpired:
                 return "错误：命令执行超时"
@@ -157,23 +186,23 @@ class ShellTool:
             # 本地模式
             try:
                 result = subprocess.run(
-                    args,
+                    cmd,
                     shell=True,
                     capture_output=True,
-                    text=True,
                     timeout=30,
                     cwd=project_path,
                 )
-                output = result.stdout
-                if result.stderr:
-                    output += "\n" + result.stderr
+                output = result.stdout.decode('utf-8', errors='replace')
+                stderr = result.stderr.decode('utf-8', errors='replace')
+                if stderr:
+                    output += "\n" + stderr
                 return output.strip() or "(无输出)"
             except subprocess.TimeoutExpired:
                 return "错误：命令执行超时"
             except Exception as e:
                 return f"错误：{e}"
 
-    def _create_session(self, args: str) -> str:
+    def _create_session(self, args: dict) -> str:
         """创建新的 shell session"""
         self._register_cleanup()
         config = self._get_config()
@@ -181,7 +210,7 @@ class ShellTool:
         workdir = config.get("docker_workdir", "/app")
         project_path = config.get("project_path", ".")
 
-        session_id = args.strip() if args.strip() else str(uuid.uuid4())[:8]
+        session_id = args.get("name") or str(uuid.uuid4())[:8]
 
         # 检查是否已存在
         if session_id in self._sessions:
@@ -263,13 +292,13 @@ class ShellTool:
             except Exception as e:
                 return f"错误：创建 session 失败 - {e}"
 
-    def _session_exec(self, args: str) -> str:
+    def _session_exec(self, args: dict) -> str:
         """在指定 session 中执行命令"""
-        parts = args.split(" ", 1)
-        if len(parts) != 2:
-            return "错误：用法 session_exec <session_id> <command>"
+        session_id = args.get("session_id", "")
+        command = args.get("command", "")
 
-        session_id, command = parts
+        if not session_id or not command:
+            return "错误：缺少 session_id 或 command 参数"
 
         if session_id not in self._sessions:
             return f"错误：session '{session_id}' 不存在"
@@ -365,12 +394,12 @@ class ShellTool:
         text = re.sub(r'[\x00-\x1F\x7F]', '', text)
         return text
 
-    def _close_session(self, args: str) -> str:
+    def _close_session(self, args: dict) -> str:
         """关闭指定 session"""
-        session_id = args.strip()
+        session_id = args.get("session_id", "")
 
         if not session_id:
-            return "错误：用法 close_session <session_id>"
+            return "错误：缺少 session_id 参数"
 
         if session_id not in self._sessions:
             return f"错误：session '{session_id}' 不存在"

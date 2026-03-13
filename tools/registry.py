@@ -37,27 +37,6 @@ class ToolRegistry:
         return [t for t in cls._tools.values() if t.name in names]
 
     @classmethod
-    def to_prompt(cls, command: str) -> str:
-        """生成单个命令的 prompt 说明"""
-        tool_class = cls._commands.get(command)
-        if not tool_class:
-            return ""
-
-        cmd_info = tool_class.commands.get(command)
-        if not cmd_info:
-            return ""
-
-        examples = cmd_info.get("examples", [])
-        examples_str = ", ".join(examples) if examples else "无"
-
-        return f"""### {command}
-{cmd_info['description']}
-
-用法：{cmd_info['usage']}
-示例：{examples_str}
-"""
-
-    @classmethod
     def check_availability(cls) -> dict[str, str]:
         """检查所有工具的可用性，返回 {tool_name: status}"""
         results = {}
@@ -70,13 +49,42 @@ class ToolRegistry:
         return results
 
     @classmethod
-    def check_availability(cls) -> dict[str, str]:
-        """检查所有工具的可用性，返回 {tool_name: status}"""
-        results = {}
-        for tool_name, tool_class in cls._tools.items():
-            if hasattr(tool_class, 'check_availability'):
-                status = tool_class.check_availability()
-            else:
-                status = "可用"
-            results[tool_name] = status
-        return results
+    def to_openai_tools(cls, tool_names: list[str] | None = None) -> list[dict]:
+        """
+        生成 OpenAI tools schema
+
+        Args:
+            tool_names: 指定要包含的命令列表，None 表示全部
+
+        Returns:
+            OpenAI tools 格式的列表
+        """
+        if tool_names is None:
+            tool_names = cls.get_all_commands()
+
+        tools = []
+        for command in tool_names:
+            tool_class = cls._commands.get(command)
+            if tool_class is None:
+                continue
+
+            cmd_info = tool_class.commands.get(command)
+            if cmd_info is None:
+                continue
+
+            # 使用命令定义中的 parameters，如果没有则使用空 schema
+            parameters = cmd_info.get("parameters", {
+                "type": "object",
+                "properties": {},
+            })
+
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": command,
+                    "description": cmd_info.get("description", ""),
+                    "parameters": parameters,
+                }
+            })
+
+        return tools

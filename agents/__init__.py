@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Agents 模块
 
-from agents.base import Agent
+from agents.trace_agent import TraceAgent
 
-__all__ = ["Agent"]
+__all__ = ["TraceAgent"]

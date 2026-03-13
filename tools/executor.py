@@ -2,26 +2,23 @@ from tools.registry import ToolRegistry
 
 
 class ToolExecutor:
-    """工具执行器，解析并执行命令"""
+    """工具执行器，接收 OpenAI function calling 格式的参数"""
 
     @classmethod
-    def call(cls, command_str: str) -> str:
+    def call(cls, function_name: str, arguments: dict) -> str:
         """
-        执行命令字符串
+        执行工具调用
 
         Args:
-            command_str: 完整命令，如 "read_file open.c:1-5"
+            function_name: 函数名/命令名，如 "read_file"
+            arguments: 参数字典，如 {"path": "main.c", "start": 1, "end": 20}
 
         Returns:
             执行结果
         """
-        parts = command_str.strip().split(" ", 1)
-        command = parts[0]
-        args = parts[1] if len(parts) > 1 else ""
-
-        tool_class = ToolRegistry.get_tool_for_command(command)
+        tool_class = ToolRegistry.get_tool_for_command(function_name)
         if tool_class is None:
-            return f"错误：未知命令 '{command}'"
+            return f"错误：未知命令 '{function_name}'"
 
         tool = tool_class()
-        return tool.execute(command, args)
+        return tool.execute(function_name, arguments)

@@ -118,6 +118,38 @@ static int handle_file(struct mg_connection *conn, void *cbdata)
     return 200;
 }
 
+// 危险处理函数: 路径遍历漏洞 - 读取当前目录文件
+static int handle_read(struct mg_connection *conn, void *cbdata)
+{
+    char filepath[512];
+    char buffer[1024];
+    char filename_buf[256];
+
+    if (get_var(conn, "name", filename_buf, sizeof(filename_buf)) == NULL) {
+        mg_printf(conn, "HTTP/1.0 400 Bad Request\r\n\r\nMissing parameter 'name'");
+        return 400;
+    }
+
+    // 危险：直接拼接用户输入，没有校验路径穿越
+    // 攻击者可以使用 ../../../etc/passwd 读取任意文件
+    sprintf(filepath, "./%s", filename_buf);
+
+    FILE *f = fopen(filepath, "r");
+    if (f == NULL) {
+        mg_printf(conn, "HTTP/1.0 404 Not Found\r\n\r\nFile not found");
+        return 404;
+    }
+
+    mg_printf(conn, "HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\n\r\n");
+    while (fgets(buffer, sizeof(buffer), f)) {
+        mg_write(conn, buffer, strlen(buffer));
+    }
+    fclose(f);
+
+    (void)cbdata;
+    return 200;
+}
+
 // 危险处理函数 4: 缓冲区溢出 + 格式化字符串
 static int handle_user(struct mg_connection *conn, void *cbdata)
 {
@@ -192,8 +224,8 @@ int main(void)
     printf("CivetWeb Test Server\n");
     printf("====================\n\n");
 
-    // 初始化 CivetWeb
-    if (mg_init_library(MG_FEATURES_TLS) != 0) {
+    // 初始化 CivetWeb (禁用 TLS 避免 macOS 库加载问题)
+    if (mg_init_library(0) != 0) {
         fprintf(stderr, "Failed to initialize CivetWeb library\n");
         return 1;
     }
@@ -209,6 +241,7 @@ int main(void)
     mg_set_request_handler(ctx, "/search", handle_search, NULL);
     mg_set_request_handler(ctx, "/system", handle_system, NULL);
     mg_set_request_handler(ctx, "/file", handle_file, NULL);
+    mg_set_request_handler(ctx, "/read", handle_read, NULL);
     mg_set_request_handler(ctx, "/user", handle_user, NULL);
     mg_set_request_handler(ctx, "/safe", handle_safe, NULL);
 
@@ -217,6 +250,7 @@ int main(void)
     printf("  - http://localhost:8080/search?q=test (SQL 注入)\n");
     printf("  - http://localhost:8080/system?action=ls (命令注入)\n");
     printf("  - http://localhost:8080/file?name=../../etc/passwd (路径遍历)\n");
+    printf("  - http://localhost:8080/read?name=../../../etc/passwd (路径遍历 - 当前目录)\n");
     printf("  - http://localhost:8080/user?name=xxx&email=yyy (缓冲区溢出)\n");
     printf("  - http://localhost:8080/safe?data=hello (安全示例)\n");
     printf("\n按 Enter 键停止服务器...\n");

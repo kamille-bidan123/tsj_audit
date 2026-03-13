@@ -19,8 +19,12 @@ import re
 import sys
 import argparse
 from pathlib import Path
-from typing import List, Dict, Optional
-from dataclasses import dataclass, asdict
+from typing import List, Dict
+
+# 添加项目根目录到路径
+sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
+
+from models import FunctionInfo
 
 
 # C/C++ 文件扩展名
@@ -57,18 +61,6 @@ MG_SET_HANDLER_PATTERN_MULTILINE = re.compile(
     r'(\w+)\s*[,\)]',
     re.MULTILINE | re.DOTALL
 )
-
-
-@dataclass
-class FunctionInfo:
-    """回调函数信息"""
-    func_name: str
-    file_path: str
-    start_line: int
-    end_line: int
-    code_snippet: str
-    project_type: str
-    attack_surface: str
 
 
 def find_source_files(project_path: str) -> List[str]:
@@ -239,7 +231,7 @@ def output_results(results: List[FunctionInfo], output_format: str = "text"):
     """输出扫描结果"""
     if output_format == "json":
         import json
-        print(json.dumps([asdict(r) for r in results], indent=2))
+        print(json.dumps([r.model_dump() for r in results], indent=2))
     else:
         # 文本格式
         if not results:
