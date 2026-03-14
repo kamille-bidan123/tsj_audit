@@ -34,7 +34,7 @@ def generate_html(results: List['TraceResult']) -> str:
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
             line-height: 1.6;
             color: #333;
-            background: #f5f5f5;
+            background: #e9ecef;
             padding: 20px;
         }
         .container {
@@ -43,19 +43,21 @@ def generate_html(results: List['TraceResult']) -> str:
         }
         h1 {
             text-align: center;
-            color: #2c3e50;
+            color: #1a1a2e;
             margin-bottom: 30px;
             padding: 20px;
-            background: #fff;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            color: #fff;
         }
         .entry-item {
             background: #fff;
             border-radius: 8px;
             margin-bottom: 15px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.12);
             overflow: hidden;
+            border: 1px solid #dee2e6;
         }
         .entry-header {
             padding: 15px 20px;
@@ -64,47 +66,62 @@ def generate_html(results: List['TraceResult']) -> str:
             justify-content: space-between;
             align-items: center;
             transition: background-color 0.2s;
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+            border-bottom: 2px solid #dee2e6;
         }
         .entry-header:hover {
-            background: #f8f9fa;
+            background: linear-gradient(135deg, #e9ecef 0%, #dee2e6 100%);
         }
         .entry-title {
             font-size: 18px;
-            font-weight: 600;
-            color: #2c3e50;
+            font-weight: 700;
+            color: #495057;
         }
         .entry-meta {
-            font-size: 14px;
-            color: #7f8c8d;
+            font-size: 13px;
+            color: #6c757d;
             margin-top: 5px;
         }
         .toggle-icon {
             font-size: 20px;
-            color: #95a5a6;
+            color: #6c757d;
             transition: transform 0.3s;
+            background: #dee2e6;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }
         .entry-item.expanded .toggle-icon {
             transform: rotate(90deg);
+            background: #495057;
+            color: #fff;
         }
         .entry-content {
             display: none;
             padding: 20px;
-            border-top: 1px solid #eee;
-            background: #fafbfc;
+            border-top: 3px solid #667eea;
+            background: #f8f9fa;
         }
         .entry-item.expanded .entry-content {
             display: block;
         }
         .section {
             margin-bottom: 20px;
+            padding: 15px;
+            background: #fff;
+            border-radius: 6px;
+            border: 1px solid #dee2e6;
         }
         .section-title {
             font-size: 16px;
-            font-weight: 600;
-            color: #34495e;
+            font-weight: 700;
+            color: #495057;
             margin-bottom: 10px;
-            padding-bottom: 5px;
-            border-bottom: 2px solid #3498db;
+            padding-bottom: 8px;
+            border-bottom: 3px solid #667eea;
         }
         .info-grid {
             display: grid;
@@ -113,9 +130,10 @@ def generate_html(results: List['TraceResult']) -> str:
             margin-bottom: 15px;
         }
         .info-item {
-            background: #f8f9fa;
-            padding: 10px;
-            border-radius: 4px;
+            background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
+            padding: 12px;
+            border-radius: 6px;
+            border: 1px solid #90caf9;
         }
         .info-label {
             font-size: 12px;
@@ -182,15 +200,15 @@ def generate_html(results: List['TraceResult']) -> str:
             background: #f8f9fa;
         }
         .nested-item {
-            background: #fafbfc;
-            border: 1px solid #e1e4e8;
-            border-radius: 4px;
+            background: linear-gradient(135deg, #fff9e6 0%, #fff3cd 100%);
+            border: 1px solid #ffc107;
+            border-radius: 6px;
             padding: 15px;
             margin: 10px 0;
         }
         .nested-title {
-            font-weight: 600;
-            color: #24292e;
+            font-weight: 700;
+            color: #856404;
             margin-bottom: 10px;
         }
         details {
@@ -198,14 +216,16 @@ def generate_html(results: List['TraceResult']) -> str:
         }
         summary {
             cursor: pointer;
-            padding: 10px;
-            background: #f6f8fa;
-            border-radius: 4px;
+            padding: 12px 15px;
+            background: linear-gradient(135deg, #e9ecef 0%, #dee2e6 100%);
+            border-radius: 6px;
             list-style: none;
-            font-weight: 500;
+            font-weight: 600;
+            color: #495057;
+            border: 1px solid #ced4da;
         }
         summary:hover {
-            background: #eaecef;
+            background: linear-gradient(135deg, #dee2e6 0%, #ced4da 100%);
         }
         summary::-webkit-details-marker {
             display: none;
@@ -214,14 +234,24 @@ def generate_html(results: List['TraceResult']) -> str:
             content: '▶ ';
             display: inline-block;
             transition: transform 0.2s;
+            color: #667eea;
         }
         details[open] summary::before {
             transform: rotate(90deg);
         }
+        details[open] summary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #fff;
+            border-color: #667eea;
+        }
+        details[open] summary::before {
+            color: #fff;
+        }
         .empty-state {
             text-align: center;
-            color: #95a5a6;
-            padding: 30px;
+            color: #adb5bd;
+            padding: 40px;
+            font-size: 16px;
         }
     </style>
 </head>
