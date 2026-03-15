@@ -270,7 +270,6 @@ def generate_html(results: List['TraceResult']) -> str:
                     <div class="entry-meta">
                         {func_info.file_path} |
                         行 {func_info.start_line}-{func_info.end_line} |
-                        {func_info.project_type} / {func_info.attack_surface}
                     </div>
                 </div>
                 <span class="toggle-icon">▶</span>
@@ -294,10 +293,6 @@ def generate_html(results: List['TraceResult']) -> str:
                         <div class="info-item">
                             <div class="info-label">行号范围</div>
                             <div class="info-value">""" + str(func_info.start_line) + """ - """ + str(func_info.end_line) + """</div>
-                        </div>
-                        <div class="info-item">
-                            <div class="info-label">项目类型</div>
-                            <div class="info-value">""" + func_info.project_type + """</div>
                         </div>
                     </div>
                     <details>

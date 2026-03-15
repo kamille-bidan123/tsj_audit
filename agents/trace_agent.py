@@ -74,13 +74,9 @@ class TraceAgent:
 
     def __init__(
         self,
-        project_type: str,
-        attack_surface: str,
         project_path: str = ".",
         debug: bool = False,
     ):
-        self.project_type = project_type
-        self.attack_surface = attack_surface
         self.project_path = project_path
         self.debug = debug
 
@@ -97,32 +93,12 @@ class TraceAgent:
         return self._llm_client
 
 
-
-    def load_input_knowledge(self) -> str:
-        """加载外部输入知识"""
-        input_path = Path(__file__).parent.parent / "knowledge" / \
-            self.project_type / self.attack_surface / "input.md"
-
-        if not input_path.exists():
-            if self.debug:
-                print(f"[警告] 未找到输入知识文件：{input_path}", file=sys.stderr)
-            return ""
-
-        with open(input_path, "r", encoding="utf-8") as f:
-            self._input_knowledge = f.read()
-
-        if self.debug:
-            print(f"[TraceAgent] 加载输入知识：{input_path}", file=sys.stderr)
-
-        return self._input_knowledge
-
-    def load_scan_results(self, code_path: Optional[str] = None) -> List[FunctionInfo]:
+    def load_scan_results(self, scan_path: str,code_path: Optional[str] = None) -> List[FunctionInfo]:
         """加载 scan.py 扫描结果"""
         if code_path is None:
             code_path = self.project_path
 
-        scan_path = Path(__file__).parent.parent / "knowledge" / \
-            self.project_type / self.attack_surface / "scan.py"
+        scan_path = Path(scan_path)
 
         if not scan_path.exists():
             raise FileNotFoundError(f"未找到 scan.py: {scan_path}")
@@ -148,15 +124,12 @@ class TraceAgent:
 
     def _build_exploration_system_prompt(self) -> str:
         """构建探索阶段系统提示"""
-        input_knowledge = self._input_knowledge or self.load_input_knowledge()
 
         return f"""你是一个代码安全审计专家，专门进行污点分析 (taint analysis)。
 
 ## 任务
 你的任务是从接口函数开始，探索代码中的外部输入污染路径。
 
-## 输入知识
-{input_knowledge}
 
 ## 审计目标
 1. 识别外部输入点 (mg_get_var, mg_read, mg_get_header 等)
@@ -180,6 +153,9 @@ class TraceAgent:
 
 代码片段:
 {func_info.code_snippet}
+
+## 外部输入知识
+{func_info.input}
 
 请使用工具调用来探索这个函数是否存在外部输入污染，追踪所有被污染的数据流。
 当你认为已经探索完成时，调用 submit 工具提交你的发现总结。
@@ -427,6 +403,7 @@ class TraceAgent:
 
     def audit_all(
         self,
+        scan_path,
         code_path: Optional[str] = None,
     ) -> List[TraceResult]:
         """
@@ -440,14 +417,12 @@ class TraceAgent:
             TraceResult 列表
         """
         # 加载扫描结果
-        scan_results = self.load_scan_results(code_path)
+        scan_results = self.load_scan_results(scan_path, code_path)
 
         if self.debug:
             print(
                 f"\n[TraceAgent] 找到 {len(scan_results)} 个接口函数", file=sys.stderr)
 
-        # 加载输入知识
-        self.load_input_knowledge()
 
         # 逐个审计
         trace_results = []

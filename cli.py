@@ -87,6 +87,13 @@ def parse_args() -> argparse.Namespace:
         help="启用调试模式（输出详细信息）",
     )
 
+    feature_group.add_argument(
+        "--scan",
+        type=str,
+        default=None,
+        help="指定起始扫描脚本",
+    )
+
     # ========== Docker 配置 ==========
     docker_group = parser.add_argument_group("Docker 配置（仅在 --enable-docker 时有效）")
 

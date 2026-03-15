@@ -17,8 +17,9 @@ class FunctionInfo(BaseModel):
     start_line: int
     end_line: int
     code_snippet: str
-    project_type: str
-    attack_surface: str
+    # 外部输入点标识（如 "mg_get_var", "mg_websocket_accept" 等）
+    # 本质是知识文档的引用，标识这个函数的外部输入来源
+    input: str
 
 
 class CodeContext(BaseModel):

@@ -24,7 +24,7 @@ class Config(BaseSettings):
     - API 配置：base_url, api_key, model_name
     - 功能开关：enable_docker, enable_lsp, debug
     - Docker 配置：docker_container, docker_workdir
-    - 项目配置：project_path, project_type, attack_surface
+    - 项目配置：project_path,
     """
 
     # API 配置
@@ -71,14 +71,9 @@ class Config(BaseSettings):
         description="项目路径"
     )
 
-    # 审计配置
-    project_type: str = Field(
-        default="c",
-        description="项目类型"
-    )
-    attack_surface: str = Field(
-        default="civetweb",
-        description="攻击面类型"
+    scan: str = Field(
+        default="",
+        description="起始扫描脚本路径"
     )
     max_turns: int = Field(
         default=50,

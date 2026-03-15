@@ -46,8 +46,6 @@ def run_trace_agent(config):
     from dataclasses import asdict
 
     agent = TraceAgent(
-        project_type=config.project_type,
-        attack_surface=config.attack_surface,
         project_path=config.project_path,
         debug=config.debug,
     )
@@ -58,11 +56,10 @@ def run_trace_agent(config):
     print()
 
     # 3. 审计所有接口函数（两阶段）
-    print("[3/4] 开始审计分析...")
-    print("      阶段 1: 多轮对话探索 (file_tool + tags_tool)")
-    print("      阶段 2: 生成 codemap")
+    print(" 开始审计分析...")
     print()
-    trace_results = agent.audit_all()
+
+    trace_results = agent.audit_all(config.scan)
     print()
 
     # 4. 导出结果
@@ -81,7 +78,7 @@ def run_trace_agent(config):
 
     print(f"入口函数数：{total_entry_points}")
     print(f"代码上下文数：{total_code_contexts}")
-    print(f"输出文件：{output_path}, {output_txt}")
+    print(f"输出文件：{output_path}")
 
 
 def main():
@@ -97,8 +94,6 @@ def main():
         print("=" * 60)
         print(f"API URL: {config.base_url}")
         print(f"模型：{config.model_name}")
-        print(f"项目路径：{config.project_path}")
-        print(f"项目类型：{config.project_type}")
         print(f"攻击面：{config.attack_surface}")
         print(f"调试模式：{config.debug}")
         print()
