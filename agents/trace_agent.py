@@ -439,6 +439,21 @@ class TraceAgent:
 
         return trace_results
 
+    def audit_single(
+        self,
+        func_info,
+    ) -> 'TraceResult':
+        """
+        审计单个函数
+
+        Args:
+            func_info: 接口函数信息
+
+        Returns:
+            TraceResult 追踪结果
+        """
+        return self.audit_function(func_info)
+
     def export_results(
         self,
         results: List[TraceResult],

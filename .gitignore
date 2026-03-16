@@ -10,4 +10,35 @@ wheels/
 .venv
 .env*
 
+# Node.js dependencies
+node_modules/
+pnpm-lock.yaml
+yarn.lock
+
+# Frontend build output
+web/frontend/dist/
+web/static/
+!web/static/index.html
+
+# Database files
+web/data/*.db
+web/data/*.sqlite
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
 .DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Cache
+.cache/
+temp/
+tmp/
