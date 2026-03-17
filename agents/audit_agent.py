@@ -30,6 +30,14 @@ class AuditAgent:
             "agent_module": "agents.path_traversal_agent",
             "agent_class": "PathTraversalAgent",
         },
+        "brute_force": {
+            "agent_module": "agents.brute_force_agent",
+            "agent_class": "BruteForceAgent",
+        },
+        "password_reset": {
+            "agent_module": "agents.password_reset_agent",
+            "agent_class": "PasswordResetAgent",
+        },
     }
 
     def __init__(

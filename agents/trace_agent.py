@@ -12,6 +12,7 @@ import json
 import importlib.util
 from typing import List, Dict, Optional, Any
 from pathlib import Path
+from datetime import datetime
 from tools.registry import ToolRegistry
 from tools.executor import ToolExecutor
 from cli import get_config_object
@@ -84,6 +85,82 @@ class TraceAgent:
         self._llm_client = None
         self._input_knowledge: Optional[str] = None
         self._scan_results: Optional[List[FunctionInfo]] = None
+
+    def _get_checkpoint_dir(self, output_dir: str) -> Path:
+        """获取中间信息保存目录"""
+        return Path(output_dir) / "checkpoints"
+
+    def _get_checkpoint_file(self, output_dir: str, func_name: str) -> Path:
+        """获取单个函数的检查点文件路径"""
+        checkpoint_dir = self._get_checkpoint_dir(output_dir)
+        # 清理函数名中的非法字符
+        safe_name = "".join(c if c.isalnum() or c in ("_", "-") else "_" for c in func_name)
+        return checkpoint_dir / f"{safe_name}.json"
+
+    def _save_checkpoint(self, output_dir: str, result: TraceResult):
+        """保存审计检查点"""
+        checkpoint_dir = self._get_checkpoint_dir(output_dir)
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
+        checkpoint_file = self._get_checkpoint_file(output_dir, result.function_info.func_name)
+        data = result.model_dump()
+
+        # 添加元信息
+        data["_checkpoint_meta"] = {
+            "saved_at": datetime.now().isoformat(),
+            "func_name": result.function_info.func_name,
+            "file_path": result.function_info.file_path,
+        }
+
+        with open(checkpoint_file, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+
+        if self.debug:
+            print(f"  [检查点] 已保存: {checkpoint_file}", file=sys.stderr)
+
+    def _load_checkpoint(self, output_dir: str, func_name: str) -> Optional[TraceResult]:
+        """加载单个函数的审计检查点"""
+        checkpoint_file = self._get_checkpoint_file(output_dir, func_name)
+
+        if not checkpoint_file.exists():
+            return None
+
+        try:
+            with open(checkpoint_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            # 移除元信息
+            data.pop("_checkpoint_meta", None)
+
+            result = TraceResult.model_validate(data)
+            return result
+        except Exception as e:
+            if self.debug:
+                print(f"  [警告] 加载检查点失败: {e}", file=sys.stderr)
+            return None
+
+    def _load_all_checkpoints(self, output_dir: str) -> Dict[str, TraceResult]:
+        """加载所有审计检查点"""
+        checkpoint_dir = self._get_checkpoint_dir(output_dir)
+
+        if not checkpoint_dir.exists():
+            return {}
+
+        checkpoints = {}
+        for checkpoint_file in checkpoint_dir.glob("*.json"):
+            try:
+                with open(checkpoint_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+
+                meta = data.pop("_checkpoint_meta", None)
+                if meta:
+                    func_name = meta.get("func_name", checkpoint_file.stem)
+                    checkpoints[func_name] = TraceResult.model_validate(data)
+            except Exception as e:
+                if self.debug:
+                    print(f"  [警告] 加载检查点失败 ({checkpoint_file}): {e}", file=sys.stderr)
+
+        return checkpoints
 
     @property
     def llm_client(self):
@@ -408,12 +485,16 @@ class TraceAgent:
         self,
         scan_path,
         code_path: Optional[str] = None,
+        output_dir: Optional[str] = None,
+        resume: bool = False,
     ) -> List[TraceResult]:
         """
         审计所有接口函数
 
         Args:
             code_path: 代码目录路径
+            output_dir: 输出目录路径，用于保存中间检查点
+            resume: 是否从中间断点恢复审计
             max_turns: 每个函数探索最大轮数
 
         Returns:
@@ -426,19 +507,42 @@ class TraceAgent:
             print(
                 f"\n[TraceAgent] 找到 {len(scan_results)} 个接口函数", file=sys.stderr)
 
+        # 如果启用了resume模式，加载已有的检查点
+        checkpoints = {}
+        completed_funcs = set()
+        if resume and output_dir:
+            checkpoints = self._load_all_checkpoints(output_dir)
+            completed_funcs = set(checkpoints.keys())
+            if self.debug and completed_funcs:
+                print(f"\n[TraceAgent] 从检查点恢复: 找到 {len(completed_funcs)} 个已完成的函数", file=sys.stderr)
 
         # 逐个审计
         trace_results = []
 
         for func_info in scan_results:
+            func_name = func_info.func_name
+
+            # 检查是否已完成
+            if func_name in completed_funcs:
+                result = checkpoints[func_name]
+                trace_results.append(result)
+                if self.debug:
+                    print(f"\n[跳过] {func_name} (已完成，来自检查点)", file=sys.stderr)
+                continue
+
+            # 新审计未完成的函数
             if self.debug:
                 print(f"\n{'='*60}", file=sys.stderr)
                 print(
-                    f"[TraceAgent] 审计函数：{func_info.func_name} @ {func_info.file_path}:{func_info.start_line}", file=sys.stderr)
+                    f"[TraceAgent] 审计函数：{func_name} @ {func_info.file_path}:{func_info.start_line}", file=sys.stderr)
                 print(f"{'='*60}", file=sys.stderr)
 
             result = self.audit_function(func_info)
             trace_results.append(result)
+
+            # 保存检查点
+            if output_dir:
+                self._save_checkpoint(output_dir, result)
 
         return trace_results
 

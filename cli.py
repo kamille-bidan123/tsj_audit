@@ -31,6 +31,9 @@ def parse_args() -> argparse.Namespace:
   # 调试模式
   python main.py --api-key sk-xxx --debug
 
+  # 断点续审（从中间停止处恢复审计）
+  python main.py --api-key sk-xxx --resume
+
 配置文件:
   程序会尝试从以下位置加载 .env 文件 (优先级从高到低):
   1. 当前工作目录 (./.env)
@@ -85,6 +88,13 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         default=None,
         help="启用调试模式（输出详细信息）",
+    )
+
+    feature_group.add_argument(
+        "--resume",
+        action="store_true",
+        default=None,
+        help="从输出目录的中间信息恢复审计",
     )
 
     feature_group.add_argument(

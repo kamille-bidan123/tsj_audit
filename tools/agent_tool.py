@@ -19,14 +19,14 @@ class AgentTool:
 
     commands = {
         "audit": {
-            "description": "启动漏洞审计 Agent，根据审计类型分析代码中是否存在相应的安全漏洞",
+            "description": "启动漏洞审计 Agent，根据审计类型分析代码中是否存在相应的安全漏洞。",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "audit_type": {
                         "type": "string",
-                        "enum": ["command_injection", "path_traversal"],
-                        "description": "审计类型：command_injection（命令注入）或 path_traversal（路径遍历）",
+                        "enum": ["command_injection", "path_traversal", "brute_force", "password_reset"],
+                        "description": "审计类型：command_injection（命令注入）、path_traversal（路径遍历）、brute_force（防暴力破解）、password_reset（重置密码漏洞）",
                     },
                 },
                 "required": [],

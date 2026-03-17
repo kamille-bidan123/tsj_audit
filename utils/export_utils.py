@@ -6,9 +6,6 @@
 
 from typing import List
 import json
-import os
-from pathlib import Path
-from datetime import datetime
 
 
 def generate_html(results: List['TraceResult']) -> str:
@@ -553,37 +550,22 @@ def export_to_json(results: List['TraceResult'], output_path: str) -> str:
 def export_results(
     results: List['TraceResult'],
     output_path: str,
-    format: str = "json",
-    output_dir: str = "output"
+    format: str = "json"
 ) -> str:
     """
     导出审计结果
 
     Args:
         results: TraceResult 列表
-        output_path: 输出路径（如果未指定目录，则使用 output_dir）
+        output_path: 输出路径
         format: 输出格式 ("json" 或 "html")
-        output_dir: 输出目录（默认 "output"）
 
     Returns:
         输出文件路径
     """
-    # 解析 output_path
-    path_obj = Path(output_path)
-
-    # 如果 output_path 是绝对路径，直接使用
-    if path_obj.is_absolute():
-        final_path = path_obj
-    else:
-        # 否则使用 output_dir + output_path
-        final_path = Path(output_dir) / path_obj
-
-    # 确保输出目录存在
-    final_path.parent.mkdir(parents=True, exist_ok=True)
-
     if format == "json":
-        return export_to_json(results, str(final_path))
+        return export_to_json(results, output_path)
     elif format == "html":
-        return export_to_html(results, str(final_path))
+        return export_to_html(results, output_path)
     else:
         raise ValueError(f"不支持的格式：{format}")

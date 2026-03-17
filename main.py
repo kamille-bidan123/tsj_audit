@@ -14,6 +14,9 @@
 
     # 调试模式
     python main.py --api-key sk-xxx --debug
+
+    # 断点续审（从中间停止处恢复审计）
+    python main.py --api-key sk-xxx --project-path /path/to/code --resume
 """
 
 import sys
@@ -51,28 +54,22 @@ def run_trace_agent(config):
         debug=config.debug,
     )
 
-    print("=" * 60)
-    print("TraceAgent 代码污点追踪审计")
-    print("=" * 60)
-    print()
+    # 检查是否启用断点续审
+    resume = config.resume if hasattr(config, 'resume') else False
 
-    # 3. 审计所有接口函数（两阶段）
-    print(" 开始审计分析...")
-    print()
+    # 如果启用了断点续审，提示用户
+    if resume and config.output_dir:
+        print(f"[恢复模式] 将从输出目录加载中间信息继续审计: {config.output_dir}")
 
-    trace_results = agent.audit_all(config.scan)
-    print()
+    trace_results = agent.audit_all(config.scan, output_dir=config.output_dir, resume=resume)
 
     # 4. 导出结果
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_filename = f"trace_results_{timestamp}.json"
     print(f"[4/4] 导出审计结果到：{config.output_dir}/{output_filename}")
-    agent.export_results(trace_results, output_filename, format="json", output_dir=config.output_dir)
+    agent.export_results(results=trace_results, format="json", output_path=config.output_dir)
+    agent.export_results(results=trace_results, format="html", output_path=config.output_dir)
 
-    print()
-    print("=" * 60)
-    print("审计完成!")
-    print("=" * 60)
 
     # 打印摘要
     total_entry_points = len(trace_results)
@@ -92,7 +89,7 @@ def main():
     # 3. 打印配置信息
     if config.debug:
         print("\n[配置信息]")
-        for key, value in asdict(config).items():
+        for key, value in dict(config).items():
             print(f"  {key}: {value}")
         print()
 
