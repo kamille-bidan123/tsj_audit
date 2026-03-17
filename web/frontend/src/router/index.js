@@ -5,7 +5,9 @@ import DashboardView from '../views/DashboardView.vue'
 import ScanView from '../views/ScanView.vue'
 import AuditView from '../views/AuditView.vue'
 import ResultsView from '../views/ResultsView.vue'
+import TaskDetailView from '../views/TaskDetailView.vue'
 import UserManagementView from '../views/UserManagementView.vue'
+import SkillsView from '../views/SkillsView.vue'
 
 const routes = [
   {
@@ -50,6 +52,16 @@ const routes = [
         name: 'UserManagement',
         component: UserManagementView,
         meta: { requiresAdmin: true }
+      },
+      {
+        path: 'skills',
+        name: 'Skills',
+        component: SkillsView
+      },
+      {
+        path: 'tasks/:id',
+        name: 'TaskDetail',
+        component: TaskDetailView
       }
     ]
   }

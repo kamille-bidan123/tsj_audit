@@ -29,6 +29,7 @@ class CommandInjectAgent:
     EXPLORATION_TOOLS = [
         "read_file", "list_dir", "search_code",
         "go_to_def", "find_refs", "list_symbols",
+        "skill",  # Skills 工具
         "submit",
     ]
 
@@ -76,6 +77,7 @@ class CommandInjectAgent:
 
     def _build_system_prompt(self) -> str:
         """构建系统提示"""
+
         return f"""你是一个代码安全审计专家，专门进行命令注入漏洞审计。
 
 ## 任务
@@ -94,6 +96,7 @@ class CommandInjectAgent:
 
 ## 工具使用
 你可以使用提供的工具来探索代码。每次调用一个工具，根据结果决定下一步行动。
+工具的详细说明（包括参数和使用场景）已在工具 schema 中定义，请参考工具描述。
 
 ## 输出格式
 当你认为已经审计完成时，调用 submit 工具提交审计结果。
@@ -120,7 +123,8 @@ class CommandInjectAgent:
 ```
 
 请使用工具调用来深入分析代码，确认是否存在命令注入漏洞。
-当你认为已经审计完成时，调用 submit 工具提交审计结果。"""
+当你认为已经审计完成时，调用 submit 工具提交审计结果。
+"""
 
     def audit(self) -> AuditResult:
         """

@@ -29,6 +29,7 @@ class PathTraversalAgent:
     EXPLORATION_TOOLS = [
         "read_file", "list_dir", "search_code",
         "go_to_def", "find_refs", "list_symbols",
+        "skill",  # Skills 工具
         "submit",
     ]
 
@@ -79,6 +80,7 @@ class PathTraversalAgent:
 
     def _build_system_prompt(self) -> str:
         """构建系统提示"""
+
         return f"""你是一个代码安全审计专家，专门进行路径遍历漏洞审计。
 
 ## 任务
@@ -103,15 +105,10 @@ class PathTraversalAgent:
 
 ## 工具使用
 你可以使用提供的工具来探索代码。每次调用一个工具，根据结果决定下一步行动。
+工具的详细说明（包括参数和使用场景）已在工具 schema 中定义，请参考工具描述。
 
 ## 输出格式
 当你认为已经审计完成时，调用 submit 工具提交审计结果。
-
-强制要求：
-你应该只关注上面提供的接口函数相关的数据流和代码路径，不要偏离主题去分析其他无关的代码。
-你应该只关注上面提供的接口函数相关的数据流和代码路径，不要偏离主题去分析其他无关的代码。
-你应该只关注上面提供的接口函数相关的数据流和代码路径，不要偏离主题去分析其他无关的代码。
-重要的事情说三遍
 """
 
     def _build_user_message(self) -> str:

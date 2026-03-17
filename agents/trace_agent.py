@@ -63,6 +63,7 @@ class TraceAgent:
     EXPLORATION_TOOLS = [
         "read_file", "list_dir", "search_code",
         "go_to_def", "find_refs", "list_symbols",
+        "skill",  # Skills 工具
         "submit",
     ]
 
@@ -139,9 +140,11 @@ class TraceAgent:
 
 ## 工具使用
 你可以使用提供的工具来探索代码。每次调用一个工具，根据结果决定下一步行动。
+工具的详细说明（包括参数和使用场景）已在工具 schema 中定义，请参考工具描述。
 
-## 输出格式
-当你认为已经探索完成时，调用 submit 工具提交你的发现总结。"""
+## Output Format (Output Format)
+当你认为已经探索完成时，调用 submit 工具提交你的发现总结。
+"""
 
     def _build_exploration_user_message(self, func_info: FunctionInfo) -> str:
         """构建探索阶段用户消息"""

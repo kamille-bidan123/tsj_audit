@@ -4,14 +4,23 @@
 API 路由 - 增加 SQLite 数据库支持和用户认证
 """
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks, Request, Depends
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Request, Depends, File, UploadFile, Body
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.security import OAuth2PasswordBearer
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
+import asyncio
+import json
 import os
 import uuid
+import sqlite3
+import zipfile
+import shutil
+import re
 from pathlib import Path
+import tarfile
+from datetime import datetime
 
 from web.models import (
     ProjectConfig, ScanRequest, AuditRequest,
@@ -676,6 +685,380 @@ def get_project(project_path: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ========== Skills 相关 ==========
+
+class CreateSkillRequest(BaseModel):
+    """创建 skill 请求"""
+    skill_name: str
+    description: Optional[str] = None
+    is_public: Optional[bool] = False
+
+
+class UpdateSkillRequest(BaseModel):
+    """更新 skill 请求"""
+    description: Optional[str] = None
+    is_public: Optional[bool] = None
+
+
+@router.get("/skills")
+def list_skills(user: Dict[str, Any] = Depends(require_auth),PublicOnly: Optional[bool] = False, limit: int = 50):
+    """
+    列出用户 skills 或公开 skills
+
+    - **publicOnly**: 是否只获取公开 skills
+    - **limit**: 数量限制
+    """
+    try:
+        if PublicOnly:
+            skills = db.list_public_skills(limit)
+        else:
+            skills = db.list_skills(user.get('id'), limit)
+        return {
+            "status": "success",
+            "data": {
+                "skills": skills,
+                "total": len(skills)
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/skills")
+def create_skill(
+    form: CreateSkillRequest,
+    user: Dict[str, Any] = Depends(require_auth)
+):
+    """
+    创建新 skill
+
+    - **skill_name**: Skill 名称
+    - **description**: 描述（可选）
+    - **is_public**: 是否公开（默认 false）
+    """
+    try:
+        # 检查 skill 是否已存在
+        if db.get_skill_by_name(form.skill_name):
+            raise HTTPException(status_code=400, detail="Skill 名称已存在")
+
+        # 生成 skill 存储路径
+        skill_dir = f"skills/{user.get('id')}/{form.skill_name}"
+        skill_path = f"/data/{skill_dir}"
+
+        skill_id = db.save_skill(
+            user.get('id'),
+            form.skill_name,
+            skill_path,
+            form.description,
+            1 if form.is_public else 0
+        )
+        if not skill_id:
+            raise HTTPException(status_code=400, detail="创建 skill 失败")
+
+        return {
+            "status": "success",
+            "message": "Skill 创建成功",
+            "data": {
+                "id": skill_id,
+                "skill_name": form.skill_name,
+                "skill_path": skill_path
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"创建 skill 失败: {str(e)}")
+
+
+@router.put("/skills/{skill_id}")
+def update_skill(
+    skill_id: int,
+    form: UpdateSkillRequest,
+    user: Dict[str, Any] = Depends(require_auth)
+):
+    """
+    更新 skill 信息
+
+    - **skill_id**: Skill ID
+    - **description**: 新描述（可选）
+    - **is_public**: 是否公开（可选）
+    """
+    try:
+        skill = db.get_skill_by_id(skill_id)
+        if not skill:
+            raise HTTPException(status_code=404, detail="Skill 不存在")
+
+        if skill.get('user_id') != user.get('id'):
+            raise HTTPException(status_code=403, detail="无权限修改该 Skill")
+
+        update_data = {}
+        if form.description is not None:
+            update_data['description'] = form.description
+        if form.is_public is not None:
+            update_data['is_public'] = 1 if form.is_public else 0
+
+        conn = sqlite3.connect(db.get_db_path(), check_same_thread=False)
+        cursor = conn.cursor()
+        fields = []
+        values = []
+        for key, value in update_data.items():
+            fields.append(f"{key} = ?")
+            values.append(value)
+        values.append(skill_id)
+
+        if fields:
+            cursor.execute(f"UPDATE skills SET {', '.join(fields)}, updated_at = CURRENT_TIMESTAMP WHERE id = ?", values)
+            conn.commit()
+
+        return {
+            "status": "success",
+            "message": "Skill 更新成功"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"更新 skill 失败: {str(e)}")
+
+
+@router.delete("/skills/{skill_id}")
+def delete_skill(
+    skill_id: int,
+    user: Dict[str, Any] = Depends(require_auth)
+):
+    """
+    删除 skill
+
+    - **skill_id**: Skill ID
+    """
+    try:
+        skill = db.get_skill_by_id(skill_id)
+        if not skill:
+            raise HTTPException(status_code=404, detail="Skill 不存在")
+
+        if skill.get('user_id') != user.get('id'):
+            raise HTTPException(status_code=403, detail="无权限删除该 Skill")
+
+        # 删除数据库记录
+        if db.delete_skill(skill_id, user.get('id')):
+            # 删除物理文件
+            skill_full_path = db.get_skill_full_path(skill_id)
+            if skill_full_path and skill_full_path.exists():
+                try:
+                    shutil.rmtree(skill_full_path)
+                except Exception:
+                    pass
+            return {
+                "status": "success",
+                "message": "Skill 已删除"
+            }
+        else:
+            raise HTTPException(status_code=400, detail="删除 skill 失败")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"删除 skill 失败: {str(e)}")
+
+
+# ========== Skill 文件上传 ==========
+
+class UploadedSkillInfo(BaseModel):
+    """上传的 Skill 信息"""
+    skill_name: str
+    description: Optional[str] = None
+    file_name: str
+    is_public: Optional[bool] = False
+
+
+@router.post("/skills/upload")
+async def upload_skill(
+    request: Request,
+    skill_file: UploadFile = File(...),
+    description: Optional[str] = None,
+    is_public: Optional[bool] = False,
+    user: Dict[str, Any] = Depends(require_auth)
+):
+    """
+    上传 Skill 文件（.zip 或 .md）
+
+    - **skill_file**: Skill 压缩包（.zip）或 Markdown 文件（.md）
+    - **description**: Skill 描述（可选）
+    - **is_public**: 是否公开（默认 false）
+    """
+    try:
+        # 验证文件类型
+        filename = skill_file.filename or ""
+        file_ext = os.path.splitext(filename)[1].lower()
+
+        if file_ext not in ['.zip', '.md']:
+            raise HTTPException(status_code=400, detail="只支持 .zip 或 .md 文件")
+
+        # 创建 skills 目录
+        skills_dir = db.get_skills_dir()
+        user_skills_dir = skills_dir / str(user.get('id'))
+        user_skills_dir.mkdir(parents=True, exist_ok=True)
+
+        # 处理 .zip 文件
+        if file_ext == '.zip':
+            # 生成 skill 名称（从文件名提取）
+            skill_name = os.path.splitext(filename)[0].lower()
+            # 只允许小写字母、数字和连字符
+            skill_name = re.sub(r'[^a-z0-9-]', '-', skill_name)
+            skill_name = re.sub(r'-+', '-', skill_name).strip('-')
+
+            if len(skill_name) < 2 or len(skill_name) > 64:
+                raise HTTPException(status_code=400, detail="Skill 名称长度应在 2-64 个字符之间")
+
+            # 检查 skill 是否已存在
+            existing_skill = db.get_skill_by_name(skill_name)
+            if existing_skill and existing_skill.get('user_id') == user.get('id'):
+                raise HTTPException(status_code=400, detail=f"Skill '{skill_name}' 已存在")
+
+            # 解压目录
+            extract_dir = user_skills_dir / skill_name
+            extract_dir.mkdir(parents=True, exist_ok=True)
+
+            # 解压文件
+            zip_path = user_skills_dir / f"{skill_name}.zip"
+            with open(zip_path, "wb") as f:
+                f.write(await skill_file.read())
+
+            try:
+                with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                    # 验证压缩包结构
+                    file_list = zip_ref.namelist()
+
+                    # 检查是否包含 SKILL.md
+                    skill_md_found = any('SKILL.md' in f or 'skill.md' in f.lower() for f in file_list)
+                    if not skill_md_found:
+                        # 自动创建 SKILL.md
+                        pass
+
+                    zip_ref.extractall(extract_dir)
+            finally:
+                # 清理临时 zip 文件
+                if zip_path.exists():
+                    zip_path.unlink()
+
+            # 从 SKILL.md 提取信息
+            skill_md_path = None
+            for root, dirs, files in os.walk(extract_dir):
+                for f in files:
+                    if f.lower() == 'skill.md':
+                        skill_md_path = Path(root) / f
+                        break
+
+            # 解析 SKILL.md 获取 name 和 description
+            extracted_name = None
+            extracted_description = None
+            if skill_md_path and skill_md_path.exists():
+                content = skill_md_path.read_text(encoding='utf-8')
+                # 解析 YAML front matter
+                if content.startswith('---'):
+                    end_match = re.search(r'^---\n(.*?)\n^---', content, re.MULTILINE | re.DOTALL)
+                    if end_match:
+                        yaml_content = end_match.group(1)
+                        # 简单解析 YAML
+                        name_match = re.search(r'name:\s*(.+)', yaml_content)
+                        if name_match:
+                            extracted_name = name_match.group(1).strip()
+
+                        desc_match = re.search(r'description:\s*(.+)', yaml_content)
+                        if desc_match:
+                            extracted_description = desc_match.group(1).strip()
+
+            # 使用上传的 name 或从文件名提取的 name
+            final_skill_name = skill_name
+
+            # 保存到数据库
+            skill_path = f"/skills/{user.get('id')}/{final_skill_name}"
+            skill_id = db.save_skill(
+                user.get('id'),
+                final_skill_name,
+                skill_path,
+                description or extracted_description,
+                1 if is_public else 0,
+                filename
+            )
+
+            return {
+                "status": "success",
+                "message": "Skill 上传成功",
+                "data": {
+                    "id": skill_id,
+                    "skill_name": final_skill_name,
+                    "skill_path": skill_path
+                }
+            }
+
+        # 处理 .md 文件
+        elif file_ext == '.md':
+            # 生成 skill 名称
+            skill_name = os.path.splitext(filename)[0].lower()
+            skill_name = re.sub(r'[^a-z0-9-]', '-', skill_name)
+            skill_name = re.sub(r'-+', '-', skill_name).strip('-')
+
+            if len(skill_name) < 2 or len(skill_name) > 64:
+                raise HTTPException(status_code=400, detail="Skill 名称长度应在 2-64 个字符之间")
+
+            # 检查 skill 是否已存在
+            existing_skill = db.get_skill_by_name(skill_name)
+            if existing_skill and existing_skill.get('user_id') == user.get('id'):
+                raise HTTPException(status_code=400, detail=f"Skill '{skill_name}' 已存在")
+
+            # 创建 skill 目录
+            skill_dir = user_skills_dir / skill_name
+            skill_dir.mkdir(parents=True, exist_ok=True)
+
+            # 保存 .md 文件
+            md_path = skill_dir / "SKILL.md"
+            content = await skill_file.read()
+            md_path.write_text(content, encoding='utf-8')
+
+            # 从 .md 文件提取信息
+            extracted_name = None
+            extracted_description = None
+            if md_path.exists():
+                file_content = md_path.read_text(encoding='utf-8')
+                if file_content.startswith('---'):
+                    end_match = re.search(r'^---\n(.*?)\n^---', file_content, re.MULTILINE | re.DOTALL)
+                    if end_match:
+                        yaml_content = end_match.group(1)
+                        name_match = re.search(r'name:\s*(.+)', yaml_content)
+                        if name_match:
+                            extracted_name = name_match.group(1).strip()
+                        desc_match = re.search(r'description:\s*(.+)', yaml_content)
+                        if desc_match:
+                            extracted_description = desc_match.group(1).strip()
+
+            # 保存到数据库
+            skill_path = f"/skills/{user.get('id')}/{skill_name}"
+            skill_id = db.save_skill(
+                user.get('id'),
+                skill_name,
+                skill_path,
+                description or extracted_description,
+                1 if is_public else 0,
+                filename
+            )
+
+            return {
+                "status": "success",
+                "message": "Skill 上传成功",
+                "data": {
+                    "id": skill_id,
+                    "skill_name": skill_name,
+                    "skill_path": skill_path
+                }
+            }
+
+    except HTTPException:
+        raise
+    except zipfile.BadZipFile:
+        raise HTTPException(status_code=400, detail="无效的 ZIP 文件")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"上传 skill 失败: {str(e)}")
+
+
 # ========== 统计信息 ==========
 
 @router.get("/stats")
@@ -738,4 +1121,195 @@ def audit_multiple_projects(configs: List[ProjectConfig]):
         "status": "success",
         "total": len(results),
         "results": results
+    }
+
+
+# ========== 审计任务管理（支持多阶段追踪） ==========
+
+class AuditTaskResponse(BaseModel):
+    """审计任务响应"""
+    task_id: str
+    status: str
+    current_phase: str
+    progress: int
+    message: Optional[str] = None
+
+
+async def run_audit_task(task_id: str, project_path: str, scan_path: str, max_turns: int, user_id: int):
+    """
+    异步运行审计任务（后台任务）
+    使用 SSE 推送进度
+    """
+    from agents.trace_agent import TraceAgent
+    from scan import scan_directory
+    import importlib.util
+    from pathlib import Path
+
+    try:
+        # 1. scan 阶段
+        db.update_audit_task_phase(task_id, "scan", "running", 10)
+        db.update_audit_task_status(task_id, "running")
+
+        abs_project_path = os.path.abspath(project_path)
+        scan_path_obj = Path(scan_path)
+
+        spec = importlib.util.spec_from_file_location("scan_module", scan_path_obj)
+        scan_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(scan_module)
+
+        scan_results = scan_module.scan_directory(abs_project_path)
+        db.save_scan_results(task_id, scan_results)
+        db.update_audit_task_phase(task_id, "scan", "completed", 20)
+        db.append_conversation_log(task_id, None, "system", "Scan 阶段完成")
+
+        # 2. trace 阶段
+        db.update_audit_task_phase(task_id, "trace", "running", 30)
+
+        agent = TraceAgent(project_path=abs_project_path, debug=False)
+        total_funcs = len(scan_results)
+        db.update_audit_task_status(task_id, "running", total_functions=total_funcs)
+
+        trace_results_list = []
+        for idx, func_info in enumerate(scan_results):
+            current_func = func_info.func_name
+            db.append_conversation_log(task_id, current_func, "system", f"开始审计: {current_func}")
+
+            trace_result = agent.audit_function(func_info)
+            trace_results_list.append(trace_result)
+
+            db.save_trace_result(task_id, trace_result)
+            db.increment_completed_functions(task_id)
+
+            progress = 30 + (idx + 1) * 60 // total_funcs if total_funcs > 0 else 90
+            db.update_audit_task_phase(task_id, "trace", "running", progress)
+            db.append_conversation_log(task_id, current_func, "assistant", f"完成审计: {current_func}")
+
+        db.update_audit_task_phase(task_id, "trace", "completed", 90)
+        db.append_conversation_log(task_id, None, "system", "Trace 阶段完成")
+
+        # 3. report 阶段
+        db.update_audit_task_phase(task_id, "report", "running", 95)
+
+        from agents.report_agent import ReportAgent
+        report_agent = ReportAgent(project_path=abs_project_path)
+        report_content = report_agent.generate_report(trace_results_list)
+
+        db.append_conversation_log(task_id, None, "system", "报告生成完成")
+        db.update_audit_task_phase(task_id, "report", "completed", 100)
+
+        # 完成任务
+        db.update_audit_task_status(task_id, "completed", total_functions=total_funcs)
+        db.append_conversation_log(task_id, None, "assistant", "审计任务 completed")
+
+    except Exception as e:
+        import traceback
+        error_msg = f"审计失败: {str(e)}\n{traceback.format_exc()}"
+        db.append_conversation_log(task_id, None, "error", error_msg)
+        db.update_audit_task_phase(task_id, "unknown", "failed", 0)
+
+
+@router.post("/tasks/audit", response_model=AuditTaskResponse)
+async def create_audit_task_endpoint(
+    request: AuditRequest,
+    background_tasks: BackgroundTasks,
+    user: Dict[str, Any] = Depends(require_auth)
+):
+    """
+    创建审计任务（异步执行）
+
+    - **project_path**: 项目路径
+    - **scan_path**: 扫描脚本路径（默认 scan.py）
+    - **max_turns**: 审计最大轮数（默认 50）
+    """
+    try:
+        # 保存项目信息
+        db.save_project(user.get('id'), "审计项目", request.project_path, "c")
+
+        # 创建审计任务
+        task_id = str(uuid.uuid4())
+        db.create_audit_task(task_id, request.project_path, request.scan_path or "scan.py", request.max_turns)
+
+        # 启动后台任务
+        background_tasks.add_task(
+            run_audit_task,
+            task_id,
+            request.project_path,
+            request.scan_path or "scan.py",
+            request.max_turns,
+            user.get('id')
+        )
+
+        return {
+            "task_id": task_id,
+            "status": "pending",
+            "current_phase": "scan",
+            "progress": 0,
+            "message": "任务已创建，正在排队执行"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/tasks/{task_id}/stream")
+async def stream_task_status(task_id: str, user: Dict[str, Any] = Depends(require_auth)):
+    """
+    SSE 流式推送任务状态
+    """
+    async def event_stream():
+        task = db.get_audit_task(task_id)
+        if not task:
+            yield f"data: {json.dumps({'error': 'Task not found'})}\n\n"
+            return
+
+        yield f"data: {json.dumps({'type': 'status', 'task': task})}\n\n"
+
+        while True:
+            task = db.get_audit_task(task_id)
+            if not task:
+                yield f"data: {json.dumps({'type': 'completed', 'message': 'Task not found'})}\n\n"
+                break
+
+            status = task.get('status', 'unknown')
+
+            if status in ['completed', 'failed']:
+                logs = db.get_conversation_logs(task_id)
+                yield f"data: {json.dumps({'type': 'final', 'task': task, 'logs': logs})}\n\n"
+                break
+
+            logs = db.get_conversation_logs(task_id)
+            if logs:
+                for log in logs[-5:]:
+                    yield f"data: {json.dumps({'type': 'message', 'log': log})}\n\n"
+
+            yield f"data: {json.dumps({'type': 'progress', 'phase': task.get('current_phase', 'unknown'), 'progress': task.get('progress', 0)})}\n\n"
+
+            await asyncio.sleep(0.5)
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@router.get("/tasks/{task_id}")
+async def get_task_status(task_id: str, user: Dict[str, Any] = Depends(require_auth)):
+    """获取任务状态"""
+    task = db.get_audit_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    logs = db.get_conversation_logs(task_id)
+
+    return {
+        "task": task,
+        "logs": logs,
+        "status": "success"
+    }
+
+
+@router.get("/tasks")
+async def list_tasks(user: Dict[str, Any] = Depends(require_auth), limit: int = 20):
+    """列出用户任务"""
+    tasks = db.list_audit_tasks(limit=limit)
+    return {
+        "tasks": tasks,
+        "total": len(tasks),
+        "status": "success"
     }

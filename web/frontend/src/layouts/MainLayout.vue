@@ -20,6 +20,7 @@
           <el-menu-item index="/scan">项目扫描</el-menu-item>
           <el-menu-item index="/audit">审计任务</el-menu-item>
           <el-menu-item index="/results">审计结果</el-menu-item>
+          <el-menu-item index="/skills">Skills</el-menu-item>
           <el-menu-item v-if="currentUser?.role === 'admin'" index="/users">用户管理</el-menu-item>
         </el-menu>
         <div class="header-actions">

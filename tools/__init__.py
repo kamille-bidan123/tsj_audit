@@ -9,6 +9,7 @@ from tools.file_tool import FileTool
 from tools.shell_tool import ShellTool
 from tools.tags_tool import TagsTool
 from tools.agent_tool import AgentTool
+from tools.skills_tool import SkillsTool, load_all_skills, get_skills, get_skill
 
 __all__ = [
     "ToolRegistry",
@@ -17,4 +18,8 @@ __all__ = [
     "ShellTool",
     "TagsTool",
     "AgentTool",
+    "SkillsTool",
+    "load_all_skills",
+    "get_skills",
+    "get_skill",
 ]

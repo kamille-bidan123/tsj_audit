@@ -80,7 +80,7 @@ def init_db():
         )
     """)
 
-    # 审计任务表
+    # 审计任务表 - 增强版，支持多阶段追踪
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS audit_tasks (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -88,9 +88,19 @@ def init_db():
             project_path TEXT NOT NULL,
             scan_path TEXT DEFAULT 'scan.py',
             max_turns INTEGER DEFAULT 50,
-            status TEXT DEFAULT 'pending',
+            status TEXT DEFAULT 'pending',  -- pending, running, completed, failed
+            current_phase TEXT DEFAULT 'scan',  -- scan, trace, audit, exploit, report
+            progress INTEGER DEFAULT 0,  -- 0-100
             total_functions INTEGER DEFAULT 0,
+            completed_functions INTEGER DEFAULT 0,
+            scan_status TEXT DEFAULT 'pending',
+            trace_status TEXT DEFAULT 'pending',
+            audit_status TEXT DEFAULT 'pending',
+            exploit_status TEXT DEFAULT 'pending',
+            report_status TEXT DEFAULT 'pending',
+            conversation_log TEXT,  -- JSON 存储对话过程
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            started_at DATETIME,
             completed_at DATETIME,
             FOREIGN KEY (project_path) REFERENCES projects(project_path)
         )
@@ -163,9 +173,47 @@ def init_db():
 
     # 创建索引
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_tasks_status ON audit_tasks(status)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_tasks_phase ON audit_tasks(current_phase)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_tasks_project ON audit_tasks(project_path)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_scan_results_task ON scan_results(task_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_trace_results_task ON trace_results(task_id)")
+
+    # Skills 表
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS skills (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            skill_name TEXT UNIQUE NOT NULL,
+            skill_path TEXT NOT NULL,
+            description TEXT,
+            is_public INTEGER DEFAULT 0,
+            file_name TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )
+    """)
+
+    # 创建 skills 索引
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_skills_user ON skills(user_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_skills_public ON skills(is_public)")
+
+    # 对话日志表 - 存储审计过程中的对话
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS conversation_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id TEXT NOT NULL,
+            func_name TEXT,
+            turn INTEGER,
+            role TEXT NOT NULL,  -- user, assistant, tool
+            content TEXT,
+            tool_calls TEXT,  -- JSON
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (task_id) REFERENCES audit_tasks(task_id)
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_conversation_task ON conversation_logs(task_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_conversation_func ON conversation_logs(func_name)")
 
     conn.commit()
     conn.close()
@@ -282,6 +330,111 @@ def delete_project(project_id: int, user_id: int = None) -> bool:
     return cursor.rowcount > 0
 
 
+# ========== Skills 操作 ==========
+
+def save_skill(user_id: int, skill_name: str, skill_path: str, description: str = None, is_public: int = 0, file_name: str = None) -> int:
+    """保存 skill 信息"""
+    conn = sqlite3.connect(get_db_path(), check_same_thread=False)
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        INSERT OR REPLACE INTO skills (user_id, skill_name, skill_path, description, is_public, file_name, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    """, (user_id, skill_name, skill_path, description, is_public, file_name))
+
+    conn.commit()
+    conn.close()
+    return cursor.lastrowid
+
+
+def get_skill_by_name(skill_name: str) -> Optional[Dict[str, Any]]:
+    """根据ename 获取 skill 信息"""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM skills WHERE skill_name = ?", (skill_name,))
+        row = cursor.fetchone()
+        if row:
+            return dict(row)
+        return None
+
+
+def get_skill_by_id(skill_id: int) -> Optional[Dict[str, Any]]:
+    """根据 ID 获取 skill 信息"""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM skills WHERE id = ?", (skill_id,))
+        row = cursor.fetchone()
+        if row:
+            return dict(row)
+        return None
+
+
+def list_skills(user_id: int = None, limit: int = 50) -> List[Dict[str, Any]]:
+    """列出 skills"""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        if user_id:
+            cursor.execute("SELECT * FROM skills WHERE user_id = ? ORDER BY updated_at DESC LIMIT ?", (user_id, limit))
+        else:
+            cursor.execute("SELECT * FROM skills ORDER BY updated_at DESC LIMIT ?", (limit,))
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def list_public_skills(limit: int = 50) -> List[Dict[str, Any]]:
+    """列出公开的 skills"""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM skills WHERE is_public = 1 ORDER BY updated_at DESC LIMIT ?", (limit,))
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def delete_skill(skill_id: int, user_id: int = None) -> bool:
+    """删除 skill"""
+    conn = sqlite3.connect(get_db_path(), check_same_thread=False)
+    cursor = conn.cursor()
+
+    # 检查表中是否存在 user_id 列
+    cursor.execute("PRAGMA table_info(skills)")
+    columns = [row[1] for row in cursor.fetchall()]
+
+    if 'user_id' in columns and user_id:
+        cursor.execute("DELETE FROM skills WHERE id = ? AND user_id = ?", (skill_id, user_id))
+    else:
+        cursor.execute("DELETE FROM skills WHERE id = ?", (skill_id,))
+
+    conn.commit()
+    conn.close()
+    return cursor.rowcount > 0
+
+
+def set_skill_public(skill_id: int, is_public: int) -> bool:
+    """设置 skill 公开状态"""
+    conn = sqlite3.connect(get_db_path(), check_same_thread=False)
+    cursor = conn.cursor()
+    cursor.execute("UPDATE skills SET is_public = ? WHERE id = ?", (1 if is_public else 0, skill_id))
+    conn.commit()
+    conn.close()
+    return cursor.rowcount > 0
+
+
+# ========== Skill 文件管理 ==========
+
+def get_skills_dir() -> Path:
+    """获取 skills 存储目录"""
+    skills_dir = DB_DIR.parent / "skills"
+    skills_dir.mkdir(parents=True, exist_ok=True)
+    return skills_dir
+
+
+def get_skill_full_path(skill_id: int) -> Optional[Path]:
+    """获取 skill 的完整文件路径"""
+    skill = get_skill_by_id(skill_id)
+    if not skill:
+        return None
+    skills_dir = get_skills_dir()
+    return skills_dir / skill['skill_path'].lstrip('/')
+
+
 # ========== 审计任务操作 ==========
 
 def create_audit_task(task_id: str, project_path: str, scan_path: str = "scan.py", max_turns: int = 50) -> int:
@@ -330,6 +483,97 @@ def get_audit_task(task_id: str) -> Optional[Dict[str, Any]]:
         if row:
             return dict(row)
         return None
+
+
+def update_audit_task_phase(task_id: str, phase: str, status: str = None, progress: int = None):
+    """更新任务的当前阶段和状态"""
+    conn = sqlite3.connect(get_db_path(), check_same_thread=False)
+    cursor = conn.cursor()
+
+    updates = ["current_phase = ?"]
+    values = [phase]
+
+    if status:
+        updates.append("status = ?")
+        values.append(status)
+    if progress is not None:
+        updates.append("progress = ?")
+        values.append(progress)
+
+    values.append(task_id)
+
+    cursor.execute(f"UPDATE audit_tasks SET {', '.join(updates)} WHERE task_id = ?", values)
+    conn.commit()
+    conn.close()
+
+
+def update_audit_task_phase_status(task_id: str, phase: str, status: str):
+    """更新任务的阶段状态"""
+    conn = sqlite3.connect(get_db_path(), check_same_thread=False)
+    cursor = conn.cursor()
+
+    phase_status_map = {
+        'scan': 'scan_status',
+        'trace': 'trace_status',
+        'audit': 'audit_status',
+        'exploit': 'exploit_status',
+        'report': 'report_status'
+    }
+
+    status_col = phase_status_map.get(phase, 'status')
+    cursor.execute(f"UPDATE audit_tasks SET {status_col} = ? WHERE task_id = ?", (status, task_id))
+    conn.commit()
+    conn.close()
+
+
+def increment_completed_functions(task_id: str):
+    """增加已完成的函数数量"""
+    conn = sqlite3.connect(get_db_path(), check_same_thread=False)
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        UPDATE audit_tasks
+        SET completed_functions = completed_functions + 1,
+            progress = CAST(completed_functions AS FLOAT) * 100 / (total_functions + 1)
+        WHERE task_id = ?
+    """, (task_id,))
+
+    conn.commit()
+    conn.close()
+
+
+def append_conversation_log(task_id: str, func_name: str, role: str, content: str, tool_calls: Dict = None):
+    """追加对话日志"""
+    conn = sqlite3.connect(get_db_path(), check_same_thread=False)
+    cursor = conn.cursor()
+
+    import json
+    tool_calls_json = json.dumps(tool_calls) if tool_calls else None
+
+    cursor.execute("""
+        INSERT INTO conversation_logs (task_id, func_name, role, content, tool_calls)
+        VALUES (?, ?, ?, ?, ?)
+    """, (task_id, func_name, role, content, tool_calls_json))
+
+    conn.commit()
+    conn.close()
+
+
+def get_conversation_logs(task_id: str, func_name: str = None) -> List[Dict[str, Any]]:
+    """获取对话日志"""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        if func_name:
+            cursor.execute(
+                "SELECT * FROM conversation_logs WHERE task_id = ? AND func_name = ? ORDER BY turn, timestamp",
+                (task_id, func_name)
+            )
+        else:
+            cursor.execute(
+                "SELECT * FROM conversation_logs WHERE task_id = ? ORDER BY turn, timestamp",
+                (task_id,)
+            )
+        return [dict(row) for row in cursor.fetchall()]
 
 
 def list_audit_tasks(project_path: str = None, limit: int = 10) -> List[Dict[str, Any]]:

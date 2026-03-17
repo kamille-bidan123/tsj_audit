@@ -78,11 +78,24 @@ class ToolRegistry:
                 "properties": {},
             })
 
+            # 获取描述
+            description = cmd_info.get("description", "")
+
+            # 如果工具类有 _build_command_description 方法，则调用它来获取动态描述
+            # 这允许 SkillsTool 等在初始化时动态生成描述
+            if hasattr(tool_class, 'commands') and command in tool_class.commands:
+                # 检查是否有动态描述生成器
+                if hasattr(tool_class, '_build_command_description'):
+                    instance = tool_class()
+                    dynamic_desc = instance._build_command_description()
+                    if dynamic_desc:
+                        description = dynamic_desc
+
             tools.append({
                 "type": "function",
                 "function": {
                     "name": command,
-                    "description": cmd_info.get("description", ""),
+                    "description": description,
                     "parameters": parameters,
                 }
             })

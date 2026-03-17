@@ -80,6 +80,12 @@ class Config(BaseSettings):
         description="审计最大轮数"
     )
 
+    # Skills 配置
+    skills_path: str = Field(
+        default="skills",
+        description="Skills 目录路径"
+    )
+
     # 命令行参数（用于传递 argparse 解析结果）
     _cli_args: dict | None = None
 
