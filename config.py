@@ -24,7 +24,7 @@ class Config(BaseSettings):
     - API 配置：base_url, api_key, model_name
     - 功能开关：enable_docker, enable_lsp, debug
     - Docker 配置：docker_container, docker_workdir
-    - 项目配置：project_path,
+    - 项目配置：project_path, scan, max_turns, output_dir
     """
 
     # API 配置
@@ -78,6 +78,10 @@ class Config(BaseSettings):
     max_turns: int = Field(
         default=50,
         description="审计最大轮数"
+    )
+    output_dir: str = Field(
+        default="output",
+        description="审计报告输出目录"
     )
 
     # Skills 配置

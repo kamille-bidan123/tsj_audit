@@ -18,6 +18,7 @@
 
 import sys
 import os
+from datetime import datetime
 
 # 添加项目根目录到路径
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -63,9 +64,10 @@ def run_trace_agent(config):
     print()
 
     # 4. 导出结果
-    output_path = "trace_results.json"
-    print(f"[4/4] 导出审计结果到：{output_path}")
-    agent.export_results(trace_results, output_path, format="json")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_filename = f"trace_results_{timestamp}.json"
+    print(f"[4/4] 导出审计结果到：{config.output_dir}/{output_filename}")
+    agent.export_results(trace_results, output_filename, format="json", output_dir=config.output_dir)
 
     print()
     print("=" * 60)
@@ -78,7 +80,7 @@ def run_trace_agent(config):
 
     print(f"入口函数数：{total_entry_points}")
     print(f"代码上下文数：{total_code_contexts}")
-    print(f"输出文件：{output_path}")
+    print(f"输出文件：{config.output_dir}/{output_filename}")
 
 
 def main():
@@ -89,13 +91,9 @@ def main():
 
     # 3. 打印配置信息
     if config.debug:
-        print("=" * 60)
-        print("配置信息")
-        print("=" * 60)
-        print(f"API URL: {config.base_url}")
-        print(f"模型：{config.model_name}")
-        print(f"攻击面：{config.attack_surface}")
-        print(f"调试模式：{config.debug}")
+        print("\n[配置信息]")
+        for key, value in asdict(config).items():
+            print(f"  {key}: {value}")
         print()
 
     # 4. 设置 Docker 模式

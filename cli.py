@@ -138,6 +138,13 @@ def parse_args() -> argparse.Namespace:
         help="攻击面类型",
     )
 
+    audit_group.add_argument(
+        "--output-dir",
+        type=str,
+        default=None,
+        help="审计报告输出目录",
+    )
+
     args = parser.parse_args()
 
     # 将命令行参数应用到配置
