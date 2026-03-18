@@ -195,7 +195,7 @@ class BruteForceAgent:
                     }
                     messages.append({
                         "role": "assistant",
-                        "content": None,
+                        "content": "",
                         "tool_calls": [tc_for_message],
                     })
                     messages.append({

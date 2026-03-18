@@ -9,6 +9,7 @@ LLM 客户端模块
 import sys
 import json
 import re
+import time
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
 
@@ -17,7 +18,7 @@ def extract_json(response: str, is_array: bool = False) -> Optional[str]:
     """从 LLM 响应中提取 JSON 字符串"""
     # 移除思考标签
     response = re.sub(r'ètes[\s\S]*?êtes', '', response)
-    response = re.sub(r'[\s\S]*?êtes', '', response)
+    response = re.sub(r'[\s\S]*?ões', '', response)
 
     # 优先从 ```json 代码块提取
     json_pattern = r'```json\s*(.*?)\s*```'
@@ -94,8 +95,26 @@ class LLMClient:
         """流式输出（debug 模式）"""
         kwargs["stream"] = True
 
-        try:
-            stream = client.chat.completions.create(**kwargs)
+        # 指数退避重试
+        max_retries = 5
+        base_delay = 2  # 初始延迟秒数
+
+        for attempt in range(max_retries):
+            try:
+                stream = client.chat.completions.create(**kwargs)
+            except Exception as e:
+                # 检查是否是限流错误（429）
+                error_str = str(e)
+                is_rate_limit = "429" in error_str or "rate limit" in error_str.lower() or "throttling" in error_str.lower()
+
+                if is_rate_limit and attempt < max_retries - 1:
+                    delay = base_delay * (2 ** attempt)  # 指数退避: 2, 4, 8, 16, 32
+                    print(f"\n[警告] API 限流，等待 {delay} 秒后重试 (尝试 {attempt + 1}/{max_retries})", file=sys.stderr)
+                    time.sleep(delay)
+                    continue
+                else:
+                    print(f"\n[错误] 请求失败：{e}", file=sys.stderr)
+                    raise
 
             full_content = ""
             reasoning_content = ""
@@ -147,8 +166,8 @@ class LLMClient:
 
             print(file=sys.stdout)
             print(f"\n[DEBUG] full_content length: {len(full_content)}, content: {full_content[:200] if full_content else 'EMPTY'}", file=sys.stderr)
-            print(f"[DEBUG] reasoning_content length: {len(reasoning_content)}, content: {reasoning_content[:200] if reasoning_content else 'EMPTY'}", file=sys.stderr)
-            print(f"[DEBUG] tool_calls_buffer: {tool_calls_buffer}", file=sys.stderr)
+            print(f"\n[DEBUG] reasoning_content length: {len(reasoning_content)}, content: {reasoning_content[:200] if reasoning_content else 'EMPTY'}", file=sys.stderr)
+            print(f"\n[DEBUG] tool_calls_buffer: {tool_calls_buffer}", file=sys.stderr)
 
             # 解析工具调用参数
             tool_calls = list(tool_calls_buffer.values()) if tool_calls_buffer else None
@@ -165,16 +184,30 @@ class LLMClient:
                 reasoning_content=reasoning_content.strip(),
             )
 
-        except Exception as e:
-            print(f"\n[错误] 请求失败：{e}", file=sys.stderr)
-            raise
-
     def _chat_non_stream(self, client, kwargs: Dict) -> ChatResponse:
         """非流式输出（非 debug 模式）"""
         kwargs["stream"] = False
 
-        try:
-            response = client.chat.completions.create(**kwargs)
+        # 指数退避重试
+        max_retries = 5
+        base_delay = 2  # 初始延迟秒数
+
+        for attempt in range(max_retries):
+            try:
+                response = client.chat.completions.create(**kwargs)
+            except Exception as e:
+                # 检查是否是限流错误（429）
+                error_str = str(e)
+                is_rate_limit = "429" in error_str or "rate limit" in error_str.lower() or "throttling" in error_str.lower()
+
+                if is_rate_limit and attempt < max_retries - 1:
+                    delay = base_delay * (2 ** attempt)  # 指数退避: 2, 4, 8, 16, 32
+                    print(f"\n[警告] API 限流，等待 {delay} 秒后重试 (尝试 {attempt + 1}/{max_retries})", file=sys.stderr)
+                    time.sleep(delay)
+                    continue
+                else:
+                    print(f"\n[错误] 请求失败：{e}", file=sys.stderr)
+                    raise
 
             # 提取内容
             full_content = ""
@@ -208,6 +241,3 @@ class LLMClient:
                 tool_calls=tool_calls,
                 reasoning_content=reasoning_content.strip(),
             )
-
-        except Exception as e:
-            raise

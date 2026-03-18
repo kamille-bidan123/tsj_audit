@@ -73,7 +73,10 @@ class AuditAgent:
 
             exploit_result = self._run_exploit_agent(audit_result)
 
-            print(f"  [Exploit] 成功: {exploit_result.success}", file=sys.stderr)
+            if exploit_result:
+                print(f"  [Exploit] 成功: {exploit_result.success}", file=sys.stderr)
+            else:
+                print(f"  [Exploit] 失败: 无法生成利用", file=sys.stderr)
 
         return audit_result, exploit_result
 

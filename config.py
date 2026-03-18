@@ -55,6 +55,12 @@ class Config(BaseSettings):
         description="启用调试模式"
     )
 
+    # 断点续审配置
+    resume: bool = Field(
+        default=False,
+        description="从输出目录的中间信息恢复审计"
+    )
+
     # Docker 配置
     docker_container: str | None = Field(
         default=None,

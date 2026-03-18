@@ -1,0 +1,70 @@
+{
+  "function_info": {
+    "func_name": "handle_file",
+    "file_path": "main.c",
+    "start_line": 91,
+    "end_line": 110,
+    "code_snippet": "91: static int handle_file(struct mg_connection *conn, void *cbdata)\n92: {\n93:     char filepath[256];\n94:     char buffer[1024];\n95:     char filename_buf[1024];\n96: \n97:     if (get_var(conn, \"file\", filename_buf, sizeof(filename_buf)) == NULL) {\n98:         mg_printf(conn, \"HTTP/1.0 400 Bad Request\\r\\n\\r\\nMissing parameter 'file'\");\n99:         return 400;\n100:     }\n101: \n102:     // 危险：路径遍历\n103:     sprintf(filepath, \"/var/www/html/%s\", filename_buf);\n104: \n105:     FILE *f = fopen(filepath, \"r\");\n106:     if (f == NULL) {\n107:         mg_printf(conn, \"HTTP/1.0 404 Not Found\\r\\n\\r\\nFile not found: %s\", filepath);\n108:         return 404;\n109:     }\n110: \n    // ... (truncated)",
+    "input": "# CivetWeb 外部输入点说明\n\n## 概述\n\nCivetWeb 是一个用 C 语言编写的嵌入式 Web 服务器。本文件描述了从外部请求到内部函数调用的数据流污染路径。\n\n## 外部输入来源\n\n### 1. HTTP 请求参数\n\n通过 `mg_get_var`、`mg_get_header` 等函数获取的用户输入：\n\n```c\n// 查询参数\nconst char *query = mg_get_var(conn, \"param_name\");\n\n// HTTP 头\nconst char *auth = mg_get_header(conn, \"Authorization\");\n\n// POST 数据\nchar post_data[1024];\nmg_read(conn, post_data, sizeof(post_data));\n```\n\n### 2. URL 路径参数\n\nURL 路径本身可能包含用户控制的输入：\n\n```c\n// 请求的 URI\nconst char *uri = mg_get_request_info(conn)->request_uri;\nconst char *method = mg_get_request_info(conn)->request_method;\n```\n\n### 3. 文件上传\n\n通过 `mg_upload` 或直接读取请求体：\n\n```c\n// 文件上传\nmg_upload(conn, \"/tmp\");\n\n// 原始请求体\nmg_read(conn, buffer, len);\n```\n\n## 常见污染路径\n\n### 路径 1: 参数 -> sprintf -> 缓冲区溢出\n```c\nchar buffer[256];\nconst char *user_input = mg_get_var(conn, \"name\");\nsprintf(buffer, \"SELECT * FROM users WHERE name='%s'\", user_input);  // SQL 注入\n```\n\n### 路径 2: 参数 -> system/exec -> 命令注入\n```c\nconst char *cmd = mg_get_var(conn, \"command\");\nchar sys_cmd[512];\nsprintf(sys_cmd, \"ls -la %s\", cmd);\nsystem(sys_cmd);  // 命令注入\n```\n\n### 路径 3: 参数 -> 文件操作 -> 路径遍历\n```c\nconst char *file = mg_get_var(conn, \"filename\");\nchar path[256];\nsprintf(path, \"/var/www/html/%s\", file);\nFILE *f = fopen(path, \"r\");  // 路径遍历\n```\n\n## 需要审计的函数模式\n\n1. **直接用户输入使用**：`mg_get_var`, `mg_read`, `mg_get_header`\n2. **字符串拼接**：`sprintf`, `strcat`, `strcpy`\n3. **危险函数调用**：`system`, `exec*`, `popen`, `fopen`\n4. **SQL 查询构造**：包含 SQL 关键字的字符串格式化\n\n## 示例输入点\n\n| 函数/位置 | 输入类型 | 风险等级 |\n|-----------|----------|----------|\n| mg_get_var(conn, \"*\") | GET/POST 参数 | 高 |\n| mg_get_header(conn, \"*\") | HTTP 头 | 中 |\n| mg_read(conn, buf, len) | 请求体 | 高 |\n| mg_get_request_info(conn) | URI/Method | 中 |\n"
+  },
+  "code_map": [
+    {
+      "function_name": "handle_file",
+      "file_path": "main.c",
+      "line_start": 91,
+      "line_end": 110,
+      "code_snippet": "static int handle_file(struct mg_connection *conn, void *cbdata)\n{\n    char filepath[256];\n    char buffer[1024];\n    char filename_buf[1024];\n\n    if (get_var(conn, \"file\", filename_buf, sizeof(filename_buf)) == NULL) {\n        mg_printf(conn, \"HTTP/1.0 400 Bad Request\\r\\n\\r\\nMissing parameter 'file'\");\n        return 400;\n    }\n\n    // 危险：路径遍历\n    sprintf(filepath, \"/var/www/html/%s\", filename_buf);\n\n    FILE *f = fopen(filepath, \"r\");\n    if (f == NULL) {\n        mg_printf(conn, \"HTTP/1.0 404 Not Found\\r\\n\\r\\nFile not found: %s\", filepath);\n        return 404;\n    }",
+      "is_entry_point": true,
+      "taint_source": "get_var(conn, \"file\", filename_buf, sizeof(filename_buf))",
+      "taint_path": "外部输入 -> filename_buf -> sprintf -> filepath -> fopen"
+    },
+    {
+      "function_name": "get_var",
+      "file_path": "main.c",
+      "line_start": 19,
+      "line_end": 33,
+      "code_snippet": "static const char *get_var(struct mg_connection *conn, const char *name, char *buf, size_t buf_size)\n{\n    struct mg_request_info *ri = mg_get_request_info(conn);\n    const char *query_string = ri->query_string;\n\n    if (query_string == NULL) {\n        return NULL;\n    }\n\n    // 使用 mg_get_var 从查询字符串中提取变量\n    int len = mg_get_var(query_string, strlen(query_string), name, buf, buf_size);\n    if (len > 0) {\n        return buf;\n    }\n    return NULL;\n}",
+      "is_entry_point": false,
+      "taint_source": "mg_get_var(query_string, strlen(query_string), name, buf, buf_size)",
+      "taint_path": "HTTP查询参数 -> buf -> 返回给调用者"
+    }
+  ],
+  "audit_results": [
+    {
+      "vulnerability_type": "path_traversal",
+      "is_vulnerable": false,
+      "confidence": "low",
+      "description": "经过深入审计，确认在 main.c 文件中存在严重的路径遍历漏洞。\n\n## 漏洞详情：\n\n### 1. handle_file 函数（第91-110行）\n- **漏洞位置**：第103行 `sprintf(filepath, \"/var/www/html/%s\", filename_buf);`\n- **危险函数**：`fopen`、`sprintf`\n- **数据流**：HTTP查询参数 `file` → `get_var` → `filename_buf` → `sprintf` → `filepath` → `fopen`\n- **攻击向量**：攻击者可通过 `../../../etc/passwd` 等路径遍历序列读取系统任意文件\n\n### 2. handle_read 函数（第130-160行）\n- **漏洞位置**：第135行 `sprintf(filepath, \"./%s\", filename_buf);`\n- **危险函数**：`fopen`、`sprintf`\n- **数据流**：HTTP查询参数 `name` → `get_var` → `filename_buf` → `sprintf` → `filepath` → `fopen`\n- **攻击向量**：攻击者可通过 `../../../etc/passwd` 等路径遍历序列读取系统任意文件\n\n## 漏洞特征：\n- 直接拼接用户输入到文件路径，未进行任何路径验证\n- 未过滤或检测路径遍历序列（如 `../`、`..\\`）\n- 未进行路径规范化处理\n- 未使用白名单机制限制可访问的文件\n\n## 可利用性：\n- 高可利用性，攻击者可读取系统敏感文件（如 `/etc/passwd`、`/etc/shadow`、配置文件等）\n- 两个端点 `/file` 和 `/read` 均存在相同漏洞\n\n## 修复建议：\n1. 实施路径规范化，移除 `../` 等遍历序列\n2. 使用白名单机制限制可访问的文件范围\n3. 对文件路径进行严格验证\n4. 使用安全的文件操作函数",
+      "taint_flow": null,
+      "recommendation": null,
+      "code_map": [
+        {
+          "function_name": "handle_file",
+          "file_path": "main.c",
+          "line_start": 91,
+          "line_end": 110,
+          "code_snippet": "static int handle_file(struct mg_connection *conn, void *cbdata)\n{\n    char filepath[256];\n    char buffer[1024];\n    char filename_buf[1024];\n\n    if (get_var(conn, \"file\", filename_buf, sizeof(filename_buf)) == NULL) {\n        mg_printf(conn, \"HTTP/1.0 400 Bad Request\\r\\n\\r\\nMissing parameter 'file'\");\n        return 400;\n    }\n\n    // 危险：路径遍历\n    sprintf(filepath, \"/var/www/html/%s\", filename_buf);\n\n    FILE *f = fopen(filepath, \"r\");\n    if (f == NULL) {\n        mg_printf(conn, \"HTTP/1.0 404 Not Found\\r\\n\\r\\nFile not found: %s\", filepath);\n        return 404;\n    }",
+          "is_entry_point": true,
+          "taint_source": "get_var(conn, \"file\", filename_buf, sizeof(filename_buf))",
+          "taint_path": "外部输入 -> filename_buf -> sprintf -> filepath -> fopen"
+        },
+        {
+          "function_name": "get_var",
+          "file_path": "main.c",
+          "line_start": 19,
+          "line_end": 33,
+          "code_snippet": "static const char *get_var(struct mg_connection *conn, const char *name, char *buf, size_t buf_size)\n{\n    struct mg_request_info *ri = mg_get_request_info(conn);\n    const char *query_string = ri->query_string;\n\n    if (query_string == NULL) {\n        return NULL;\n    }\n\n    // 使用 mg_get_var 从查询字符串中提取变量\n    int len = mg_get_var(query_string, strlen(query_string), name, buf, buf_size);\n    if (len > 0) {\n        return buf;\n    }\n    return NULL;\n}",
+          "is_entry_point": false,
+          "taint_source": "mg_get_var(query_string, strlen(query_string), name, buf, buf_size)",
+          "taint_path": "HTTP查询参数 -> buf -> 返回给调用者"
+        }
+      ]
+    }
+  ],
+  "exploit_results": [],
+  "_checkpoint_meta": {
+    "saved_at": "2026-03-18T09:59:44.655658",
+    "func_name": "handle_file",
+    "file_path": "main.c"
+  }
+}

@@ -320,7 +320,7 @@ class TraceAgent:
                     }
                     messages.append({
                         "role": "assistant",
-                        "content": None,
+                        "content": "",
                         "tool_calls": [tc_for_message],
                     })
                     messages.append({
@@ -487,7 +487,7 @@ class TraceAgent:
         code_path: Optional[str] = None,
         output_dir: Optional[str] = None,
         resume: bool = False,
-    ) -> List[TraceResult]:
+    ) -> None:
         """
         审计所有接口函数
 
@@ -495,10 +495,10 @@ class TraceAgent:
             code_path: 代码目录路径
             output_dir: 输出目录路径，用于保存中间检查点
             resume: 是否从中间断点恢复审计
-            max_turns: 每个函数探索最大轮数
 
-        Returns:
-            TraceResult 列表
+        说明:
+            审计结果会逐个保存到 output_dir/checkpoints/ 目录，
+            完成后会自动合并所有 checkpoint 生成最终报告。
         """
         # 加载扫描结果
         scan_results = self.load_scan_results(scan_path, code_path)
@@ -517,15 +517,11 @@ class TraceAgent:
                 print(f"\n[TraceAgent] 从检查点恢复: 找到 {len(completed_funcs)} 个已完成的函数", file=sys.stderr)
 
         # 逐个审计
-        trace_results = []
-
         for func_info in scan_results:
             func_name = func_info.func_name
 
             # 检查是否已完成
             if func_name in completed_funcs:
-                result = checkpoints[func_name]
-                trace_results.append(result)
                 if self.debug:
                     print(f"\n[跳过] {func_name} (已完成，来自检查点)", file=sys.stderr)
                 continue
@@ -538,13 +534,14 @@ class TraceAgent:
                 print(f"{'='*60}", file=sys.stderr)
 
             result = self.audit_function(func_info)
-            trace_results.append(result)
 
             # 保存检查点
             if output_dir:
                 self._save_checkpoint(output_dir, result)
 
-        return trace_results
+        # 合并所有 checkpoint 生成最终报告
+        if output_dir:
+            self._merge_checkpoints_and_export(output_dir)
 
     def audit_single(
         self,
@@ -560,6 +557,68 @@ class TraceAgent:
             TraceResult 追踪结果
         """
         return self.audit_function(func_info)
+
+    def _merge_checkpoints_and_export(self, output_dir: str) -> List[TraceResult]:
+        """
+        合并所有 checkpoint 并导出最终报告
+
+        Args:
+            output_dir: 输出目录路径
+
+        Returns:
+            合并后的 TraceResult 列表
+        """
+        import glob
+        from utils.export_utils import export_results as export
+
+        checkpoint_dir = self._get_checkpoint_dir(output_dir)
+        checkpoint_files = sorted(glob.glob(str(checkpoint_dir / "*.json")))
+
+        if self.debug:
+            print(f"\n[合并] 找到 {len(checkpoint_files)} 个检查点文件", file=sys.stderr)
+
+        results = []
+        for checkpoint_file in checkpoint_files:
+            try:
+                with open(checkpoint_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                meta = data.pop("_checkpoint_meta", None)
+                if meta:
+                    result = TraceResult.model_validate(data)
+                    results.append(result)
+                    if self.debug:
+                        print(f"  [合并] {checkpoint_file}", file=sys.stderr)
+            except Exception as e:
+                if self.debug:
+                    print(f"  [警告] 合并检查点失败 ({checkpoint_file}): {e}", file=sys.stderr)
+
+        # 导出最终结果
+        if results:
+            # 按函数名排序
+            results.sort(key=lambda x: x.function_info.func_name)
+
+            # 时间戳用于文件名
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_filename = f"trace_results_{timestamp}"
+
+            # 导出 JSON
+            json_path = str(Path(output_dir) / f"{output_filename}.json")
+            export(results, json_path, "json")
+            if self.debug:
+                print(f"[导出] JSON: {json_path}", file=sys.stderr)
+
+            # 导出 HTML
+            html_path = str(Path(output_dir) / f"{output_filename}.html")
+            export(results, html_path, "html")
+            if self.debug:
+                print(f"[导出] HTML: {html_path}", file=sys.stderr)
+
+            print(f"\n[完成] 审计完成，共 {len(results)} 个函数")
+            print(f"输出文件: {output_filename}.json, {output_filename}.html")
+        else:
+            print("\n[警告] 没有找到任何审计结果")
+
+        return results
 
     def export_results(
         self,
