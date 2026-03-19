@@ -1,0 +1,78 @@
+{
+  "function_info": {
+    "func_name": "handle_upload_logo",
+    "file_path": "src/main_web.c",
+    "start_line": 1,
+    "end_line": 100,
+    "code_snippet": "",
+    "input": "文件名"
+  },
+  "code_map": [
+    {
+      "function_name": "handle_upload_logo",
+      "file_path": "src/main_web.c",
+      "line_start": 332,
+      "line_end": 350,
+      "code_snippet": "static int handle_upload_logo(struct mg_connection* conn, void* cbdata) {\n    char filename[256];\n    if (!get_param(conn, \"filename\", filename, sizeof(filename))) {\n        send_json(conn, 400, \"Missing filename\", NULL);\n        return 200;\n    }\n\n    // 漏洞：直接拼接路径\n    char filepath[512];\n    snprintf(filepath, sizeof(filepath), \"./www/upload/%s\", filename);\n\n    mkdir(\"./www/upload\", 0755);\n    FILE* f = fopen(filepath, \"w\");\n    if (f) {\n        fprintf(f, \"Logo uploaded: %s\\n\", filename);\n        fclose(f);\n        send_json(conn, 200, \"Logo uploaded\", NULL);\n    } else {\n        send_json(conn, 500, \"Failed to upload\", NULL);\n    }\n    return 200;\n}",
+      "is_entry_point": true,
+      "taint_source": "filename参数",
+      "taint_path": "外部输入->文件操作"
+    },
+    {
+      "function_name": "get_param",
+      "file_path": "src/main_web.c",
+      "line_start": 20,
+      "line_end": 40,
+      "code_snippet": "static const char* get_param(struct mg_connection* conn, const char* name, char* buf, size_t buf_size) {\n    const struct mg_request_info* ri = mg_get_request_info(conn);\n\n    // 先尝试从 query_string 获取 (GET 请求)\n    if (ri->query_string) {\n        int len = mg_get_var(ri->query_string, strlen(ri->query_string), name, buf, buf_size);\n        if (len > 0) return buf;\n    }\n\n    // 尝试从 POST 数据获取\n    // 读取 POST 数据\n    char post_data[MAX_POST_DATA];\n    int post_len = mg_read(conn, post_data, sizeof(post_data) - 1);\n    if (post_len > 0) {\n        post_data[post_len] = '\\0';\n        int len = mg_get_var(post_data, post_len, name, buf, buf_size);\n        if (len > 0) return buf;\n    }\n\n    return NULL;\n}",
+      "is_entry_point": false,
+      "taint_source": "mg_get_var, mg_read",
+      "taint_path": "外部输入处理"
+    }
+  ],
+  "audit_results": [
+    {
+      "vulnerability_type": "path_traversal",
+      "is_vulnerable": true,
+      "confidence": "high",
+      "description": "在handle_upload_logo函数中存在路径遍历漏洞。攻击者可以通过filename参数注入路径遍历序列（如../../../etc/passwd），从而在服务器任意位置创建或覆盖文件。",
+      "taint_flow": "外部输入filename参数 -> get_param函数 -> 直接路径拼接 -> fopen文件操作",
+      "recommendation": "1. 对filename参数进行严格的路径验证和过滤；2. 使用白名单机制限制允许的文件名字符；3. 使用basename函数提取文件名；4. 对最终路径进行规范化检查，移除../等遍历序列；5. 限制文件只能写入指定目录内。",
+      "code_map": [
+        {
+          "function_name": "handle_upload_logo",
+          "file_path": "src/main_web.c",
+          "line_start": 332,
+          "line_end": 350,
+          "code_snippet": "static int handle_upload_logo(struct mg_connection* conn, void* cbdata) {\n    char filename[256];\n    if (!get_param(conn, \"filename\", filename, sizeof(filename))) {\n        send_json(conn, 400, \"Missing filename\", NULL);\n        return 200;\n    }\n\n    // 漏洞：直接拼接路径\n    char filepath[512];\n    snprintf(filepath, sizeof(filepath), \"./www/upload/%s\", filename);\n\n    mkdir(\"./www/upload\", 0755);\n    FILE* f = fopen(filepath, \"w\");\n    if (f) {\n        fprintf(f, \"Logo uploaded: %s\\n\", filename);\n        fclose(f);\n        send_json(conn, 200, \"Logo uploaded\", NULL);\n    } else {\n        send_json(conn, 500, \"Failed to upload\", NULL);\n    }\n    return 200;\n}",
+          "is_entry_point": true,
+          "taint_source": "filename参数",
+          "taint_path": "外部输入->文件操作"
+        },
+        {
+          "function_name": "get_param",
+          "file_path": "src/main_web.c",
+          "line_start": 20,
+          "line_end": 40,
+          "code_snippet": "static const char* get_param(struct mg_connection* conn, const char* name, char* buf, size_t buf_size) {\n    const struct mg_request_info* ri = mg_get_request_info(conn);\n\n    // 先尝试从 query_string 获取 (GET 请求)\n    if (ri->query_string) {\n        int len = mg_get_var(ri->query_string, strlen(ri->query_string), name, buf, buf_size);\n        if (len > 0) return buf;\n    }\n\n    // 尝试从 POST 数据获取\n    // 读取 POST 数据\n    char post_data[MAX_POST_DATA];\n    int post_len = mg_read(conn, post_data, sizeof(post_data) - 1);\n    if (post_len > 0) {\n        post_data[post_len] = '\\0';\n        int len = mg_get_var(post_data, post_len, name, buf, buf_size);\n        if (len > 0) return buf;\n    }\n\n    return NULL;\n}",
+          "is_entry_point": false,
+          "taint_source": "mg_get_var, mg_read",
+          "taint_path": "外部输入处理"
+        }
+      ]
+    }
+  ],
+  "exploit_results": [
+    {
+      "vulnerability_type": "path_traversal",
+      "success": false,
+      "poc_command": "",
+      "output": "经过多次尝试，无法验证路径遍历漏洞的存在。所有对 /upload_logo 端点的请求都返回相同的登录页面 HTML 响应，而不是预期的 JSON 响应。这表明可能：\n1. /upload_logo 端点不存在或路由配置不正确\n2. 服务可能没有正确处理 POST 请求\n3. 服务可能返回了默认的错误页面\n\n尝试的 PoC 命令包括：\n- GET 请求：curl -X GET \"http://localhost:8081/upload_logo?filename=../../../etc/passwd\"\n- POST 请求：curl -X POST http://localhost:8081/upload_logo -d \"filename=../../../etc/passwd\"\n- 各种路径遍历 payload：../../../etc/passwd, ../../../../tmp/poc_test.txt\n- 正常文件名测试：test.txt, normal.txt\n\n所有请求都返回相同的登录页面，没有观察到文件创建或路径遍历成功的迹象。",
+      "error": null
+    }
+  ],
+  "_checkpoint_meta": {
+    "saved_at": "2026-03-19T03:42:59.184434",
+    "func_name": "handle_upload_logo",
+    "file_path": "src/main_web.c"
+  }
+}

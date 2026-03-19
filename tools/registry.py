@@ -37,18 +37,6 @@ class ToolRegistry:
         return [t for t in cls._tools.values() if t.name in names]
 
     @classmethod
-    def check_availability(cls) -> dict[str, str]:
-        """检查所有工具的可用性，返回 {tool_name: status}"""
-        results = {}
-        for tool_name, tool_class in cls._tools.items():
-            if hasattr(tool_class, 'check_availability'):
-                status = tool_class.check_availability()
-            else:
-                status = "可用"
-            results[tool_name] = status
-        return results
-
-    @classmethod
     def to_openai_tools(cls, tool_names: list[str] | None = None) -> list[dict]:
         """
         生成 OpenAI tools schema

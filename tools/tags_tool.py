@@ -81,25 +81,6 @@ class TagsTool:
         """获取项目路径"""
         return _get_global_config().get("project_path", ".")
 
-    @classmethod
-    def check_availability(cls) -> str:
-        """检查 tags 文件是否存在"""
-        project_path = _get_global_config().get("project_path", ".")
-        tags_file = os.path.join(project_path, "tags")
-        cscope_file = os.path.join(project_path, "cscope.out")
-
-        has_tags = os.path.exists(tags_file)
-        has_cscope = os.path.exists(cscope_file)
-
-        if has_tags and has_cscope:
-            return "可用"
-        elif has_tags:
-            return "部分可用（缺少 cscope.out）"
-        elif has_cscope:
-            return "部分可用（缺少 tags）"
-        else:
-            return "不可用（请先运行 scripts/build_index.py）"
-
     def execute(self, command: str, args: dict) -> str:
         """执行命令，接收参数字典"""
         if command == "go_to_def":

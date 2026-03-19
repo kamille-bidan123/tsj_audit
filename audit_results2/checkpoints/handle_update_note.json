@@ -1,0 +1,69 @@
+{
+  "function_info": {
+    "func_name": "handle_update_note",
+    "file_path": "test_project/src/rpc.c",
+    "start_line": 170,
+    "end_line": 181,
+    "code_snippet": "int handle_update_note(const rpc_request_t* request, rpc_response_t* response) {\n    int rc = db_note_update(request->note_id, request->title, request->content);\n    if (rc != 0) {\n        response->status = RPC_ERROR_NOT_FOUND;\n        snprintf(response->message, sizeof(response->message), \"Failed to update note\");\n        return -1;\n    }\n\n    response->status = RPC_SUCCESS;\n    snprintf(response->message, sizeof(response->message), \"Note updated\");\n    return 0;\n}",
+    "input": "HTTP 请求参数"
+  },
+  "code_map": [
+    {
+      "function_name": "handle_update_note",
+      "file_path": "test_project/src/rpc.c",
+      "line_start": 170,
+      "line_end": 181,
+      "code_snippet": "static int handle_update_note(const rpc_request_t* request, rpc_response_t* response) {\n    int rc = db_note_update(request->note_id, request->title, request->content);\n    if (rc != 0) {\n        response->status = RPC_ERROR_NOT_FOUND;\n        snprintf(response->message, sizeof(response->message), \"Failed to update note\");\n        return -1;\n    }\n\n    response->status = RPC_SUCCESS;\n    snprintf(response->message, sizeof(response->message), \"Note updated\");\n    return 0;\n}",
+      "is_entry_point": true,
+      "taint_source": "request->note_id, request->title, request->content",
+      "taint_path": "外部输入通过rpc_request_t结构体传入"
+    },
+    {
+      "function_name": "db_note_update",
+      "file_path": "test_project/src/db.c",
+      "line_start": 522,
+      "line_end": 540,
+      "code_snippet": "int db_note_update(int note_id, const char* title, const char* content) {\n    if (g_db == NULL) return -1;\n\n    sqlite3_stmt* stmt;\n    int rc = sqlite3_prepare_v2(g_db, UPDATE_NOTE, -1, &stmt, NULL);\n    if (rc != SQLITE_OK) return -1;\n\n    sqlite3_bind_text(stmt, 1, title, -1, NULL);\n    sqlite3_bind_text(stmt, 2, content ? content : \"\", -1, NULL);\n\n    char timestamp[32];\n    get_timestamp(timestamp, sizeof(timestamp));\n    sqlite3_bind_text(stmt, 3, timestamp, -1, NULL);\n    sqlite3_bind_int(stmt, 4, note_id);\n\n    rc = sqlite3_step(stmt);\n    sqlite3_finalize(stmt);\n\n    return (rc == SQLITE_DONE) ? 0 : -1;",
+      "is_entry_point": false,
+      "taint_source": "title, content, note_id",
+      "taint_path": "从handle_update_note传入，通过sqlite3_bind_text绑定到SQL语句"
+    },
+    {
+      "function_name": "handle_update_note",
+      "file_path": "test_project/src/main_web.c",
+      "line_start": 231,
+      "line_end": 241,
+      "code_snippet": "static int handle_update_note(struct mg_connection* conn, void* cbdata) {\n    char note_id_str[32], title[256];\n    if (!get_param(conn, \"note_id\", note_id_str, sizeof(note_id_str)) ||\n        !get_param(conn, \"title\", title, sizeof(title))) {\n        send_json(conn, 400, \"Missing parameters\", NULL);\n        return 200;\n    }\n\n    int note_id = atoi(note_id_str);\n    int rc = note_update_note(note_id, title, \"\");\n    send_json(conn, rc == 0 ? 200 : 404, rc == 0 ? \"Note updated\" : \"Note not found\", NULL);\n    return 200;\n}",
+      "is_entry_point": false,
+      "taint_source": "note_id, title",
+      "taint_path": "通过get_param从HTTP请求参数获取"
+    },
+    {
+      "function_name": "get_param",
+      "file_path": "test_project/src/main_web.c",
+      "line_start": 20,
+      "line_end": 40,
+      "code_snippet": "static const char* get_param(struct mg_connection* conn, const char* name, char* buf, size_t buf_size) {\n    const struct mg_request_info* ri = mg_get_request_info(conn);\n\n    // 先尝试从 query_string 获取 (GET 请求)\n    if (ri->query_string) {\n        int len = mg_get_var(ri->query_string, strlen(ri->query_string), name, buf, buf_size);\n        if (len > 0) return buf;\n    }\n\n    // 尝试从 POST 数据获取\n    // 读取 POST 数据\n    char post_data[MAX_POST_DATA];\n    int post_len = mg_read(conn, post_data, sizeof(post_data) - 1);\n    if (post_len > 0) {\n        post_data[post_len] = '\\0';\n        int len = mg_get_var(post_data, post_len, name, buf, buf_size);\n        if (len > 0) return buf;\n    }\n\n    return NULL;\n}",
+      "is_entry_point": false,
+      "taint_source": "mg_get_var, mg_read",
+      "taint_path": "外部输入点：从HTTP请求参数和POST数据获取用户输入"
+    },
+    {
+      "function_name": "note_update_note",
+      "file_path": "test_project/src/note_logic.c",
+      "line_start": 141,
+      "line_end": 143,
+      "code_snippet": "int note_update_note(int note_id, const char* title, const char* content) {\n    return db_note_update(note_id, title, content);\n}",
+      "is_entry_point": false,
+      "taint_source": "note_id, title, content",
+      "taint_path": "从HTTP处理函数传入，传递给db_note_update"
+    }
+  ],
+  "audit_results": [],
+  "exploit_results": [],
+  "_checkpoint_meta": {
+    "saved_at": "2026-03-19T03:13:36.154265",
+    "func_name": "handle_update_note",
+    "file_path": "test_project/src/rpc.c"
+  }
+}

@@ -1,1 +1,10 @@
-main.c
+src/db.c
+src/db.h
+src/main_web.c
+src/main_worker.c
+src/note_logic.c
+src/note_logic.h
+src/rpc.c
+src/rpc.h
+src/utils.c
+src/utils.h

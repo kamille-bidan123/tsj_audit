@@ -1,0 +1,69 @@
+{
+  "function_info": {
+    "func_name": "handle_delete_note",
+    "file_path": "test_project/src/rpc.c",
+    "start_line": 183,
+    "end_line": 194,
+    "code_snippet": "int handle_delete_note(const rpc_request_t* request, rpc_response_t* response) {\n    int rc = db_note_delete(request->note_id);\n    if (rc != 0) {\n        response->status = RPC_ERROR_NOT_FOUND;\n        snprintf(response->message, sizeof(response->message), \"Failed to delete note\");\n        return -1;\n    }\n\n    response->status = RPC_SUCCESS;\n    snprintf(response->message, sizeof(response->message), \"Note deleted\");\n    return 0;\n}",
+    "input": "HTTP 请求参数"
+  },
+  "code_map": [
+    {
+      "function_name": "handle_delete_note",
+      "file_path": "src/main_web.c",
+      "line_start": 246,
+      "line_end": 258,
+      "code_snippet": "static int handle_delete_note(struct mg_connection* conn, void* cbdata) {\n    char note_id_str[32];\n    if (!get_param(conn, \"note_id\", note_id_str, sizeof(note_id_str))) {\n        send_json(conn, 400, \"Missing note_id\", NULL);\n        return 200;\n    }\n\n    int note_id = atoi(note_id_str);\n    int rc = note_delete_note(note_id);\n    send_json(conn, rc == 0 ? 200 : 404, rc == 0 ? \"Note deleted\" : \"Note not found\", NULL);\n    return 200;\n}",
+      "is_entry_point": true,
+      "taint_source": "HTTP请求参数note_id",
+      "taint_path": "外部输入 -> get_param -> note_id_str -> note_id"
+    },
+    {
+      "function_name": "get_param",
+      "file_path": "src/main_web.c",
+      "line_start": 20,
+      "line_end": 40,
+      "code_snippet": "static const char* get_param(struct mg_connection* conn, const char* name, char* buf, size_t buf_size) {\n    const struct mg_request_info* ri = mg_get_request_info(conn);\n\n    // 先尝试从 query_string 获取 (GET 请求)\n    if (ri->query_string) {\n        int len = mg_get_var(ri->query_string, strlen(ri->query_string), name, buf, buf_size);\n        if (len > 0) return buf;\n    }\n\n    // 尝试从 POST 数据获取\n    // 读取 POST 数据\n    char post_data[MAX_POST_DATA];\n    int post_len = mg_read(conn, post_data, sizeof(post_data) - 1);\n    if (post_len > 0) {\n        post_data[post_len] = '\\0';\n        int len = mg_get_var(post_data, post_len, name, buf, buf_size);\n        if (len > 0) return buf;\n    }\n\n    return NULL;\n}",
+      "is_entry_point": false,
+      "taint_source": "mg_get_var, mg_read",
+      "taint_path": "外部输入 -> HTTP参数 -> buf缓冲区"
+    },
+    {
+      "function_name": "note_delete_note",
+      "file_path": "src/note_logic.c",
+      "line_start": 146,
+      "line_end": 148,
+      "code_snippet": "int note_delete_note(int note_id) {\n    return db_note_delete(note_id);\n}",
+      "is_entry_point": false,
+      "taint_source": "note_id参数",
+      "taint_path": "note_id -> db_note_delete"
+    },
+    {
+      "function_name": "handle_delete_note",
+      "file_path": "src/rpc.c",
+      "line_start": 183,
+      "line_end": 194,
+      "code_snippet": "static int handle_delete_note(const rpc_request_t* request, rpc_response_t* response) {\n    int rc = db_note_delete(request->note_id);\n    if (rc != 0) {\n        response->status = RPC_ERROR_NOT_FOUND;\n        snprintf(response->message, sizeof(response->message), \"Failed to delete note\");\n        return -1;\n    }\n\n    response->status = RPC_SUCCESS;\n    snprintf(response->message, sizeof(response->message), \"Note deleted\");\n    return 0;\n}",
+      "is_entry_point": false,
+      "taint_source": "request->note_id",
+      "taint_path": "RPC请求 -> request->note_id -> db_note_delete"
+    },
+    {
+      "function_name": "db_note_delete",
+      "file_path": "src/db.c",
+      "line_start": 543,
+      "line_end": 556,
+      "code_snippet": "int db_note_delete(int note_id) {\n    if (g_db == NULL) return -1;\n\n    sqlite3_stmt* stmt;\n    int rc = sqlite3_prepare_v2(g_db, DELETE_NOTE, -1, &stmt, NULL);\n    if (rc != SQLITE_OK) return -1;\n\n    char timestamp[32];\n    get_timestamp(timestamp, sizeof(timestamp));\n    sqlite3_bind_text(stmt, 1, timestamp, -1, NULL);\n    sqlite3_bind_int(stmt, 2, note_id);\n\n    rc = sqlite3_step(stmt);\n    sqlite3_finalize(stmt);\n\n    return (rc == SQLITE_DONE) ? 0 : -1;\n}",
+      "is_entry_point": false,
+      "taint_source": "note_id参数",
+      "taint_path": "note_id -> SQL查询参数绑定"
+    }
+  ],
+  "audit_results": [],
+  "exploit_results": [],
+  "_checkpoint_meta": {
+    "saved_at": "2026-03-19T03:16:25.363864",
+    "func_name": "handle_delete_note",
+    "file_path": "test_project/src/rpc.c"
+  }
+}

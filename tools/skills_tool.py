@@ -164,19 +164,6 @@ class SkillsTool:
                 continue
 
     @classmethod
-    def check_availability(cls) -> str:
-        """检查 Skills 工具的可用性"""
-        if not cls._skills_loaded:
-            cls._load_all_skills()
-
-        skill_count = len(cls._skills)
-        if skill_count > 0:
-            return f"可用（已加载 {skill_count} 个 Skills）"
-        else:
-            skills_path = _get_skills_path()
-            return f"可用（Skills 目录: {skills_path}，待加载）"
-
-    @classmethod
     def get_available_skills(cls) -> List[Dict]:
         """获取所有可用的 Skills 列表"""
         if not cls._skills_loaded:

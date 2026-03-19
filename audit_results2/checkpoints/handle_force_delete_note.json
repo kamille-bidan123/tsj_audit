@@ -1,0 +1,138 @@
+{
+  "function_info": {
+    "func_name": "handle_force_delete_note",
+    "file_path": "test_project/src/rpc.c",
+    "start_line": 209,
+    "end_line": 220,
+    "code_snippet": "int handle_force_delete_note(const rpc_request_t* request, rpc_response_t* response) {\n    int rc = db_note_force_delete(request->note_id);\n    if (rc != 0) {\n        response->status = RPC_ERROR_NOT_FOUND;\n        snprintf(response->message, sizeof(response->message), \"Failed to permanently delete note\");\n        return -1;\n    }\n\n    response->status = RPC_SUCCESS;\n    snprintf(response->message, sizeof(response->message), \"Note permanently deleted\");\n    return 0;\n}",
+    "input": "HTTP 请求参数"
+  },
+  "code_map": [
+    {
+      "function_name": "handle_force_delete_note",
+      "file_path": "test_project/src/rpc.c",
+      "line_start": 209,
+      "line_end": 220,
+      "code_snippet": "static int handle_force_delete_note(const rpc_request_t* request, rpc_response_t* response) {\n    int rc = db_note_force_delete(request->note_id);\n    if (rc != 0) {\n        response->status = RPC_ERROR_NOT_FOUND;\n        snprintf(response->message, sizeof(response->message), \"Failed to permanently delete note\");\n        return -1;\n    }\n\n    response->status = RPC_SUCCESS;\n    snprintf(response->message, sizeof(response->message), \"Note permanently deleted\");\n    return 0;\n}",
+      "is_entry_point": true,
+      "taint_source": "request->note_id (来自HTTP请求参数)",
+      "taint_path": "HTTP请求参数 -> rpc_request_t.note_id -> db_note_force_delete()"
+    },
+    {
+      "function_name": "db_note_force_delete",
+      "file_path": "test_project/src/db.c",
+      "line_start": 579,
+      "line_end": 590,
+      "code_snippet": "int db_note_force_delete(int note_id) {\n    if (g_db == NULL) return -1;\n\n    sqlite3_stmt* stmt;\n    int rc = sqlite3_prepare_v2(g_db, FORCE_DELETE_NOTE, -1, &stmt, NULL);\n    if (rc != SQLITE_OK) return -1;\n\n    sqlite3_bind_int(stmt, 1, note_id);\n\n    rc = sqlite3_step(stmt);\n    sqlite3_finalize(stmt);",
+      "is_entry_point": false,
+      "taint_source": "note_id (来自handle_force_delete_note)",
+      "taint_path": "note_id -> sqlite3_bind_int() -> SQL查询执行"
+    },
+    {
+      "function_name": "handle_force_delete_note (HTTP接口)",
+      "file_path": "test_project/src/main_web.c",
+      "line_start": 260,
+      "line_end": 270,
+      "code_snippet": "static int handle_force_delete_note(struct mg_connection* conn, void* cbdata) {\n    char note_id_str[32];\n    if (!get_param(conn, \"note_id\", note_id_str, sizeof(note_id_str))) {\n        send_json(conn, 400, \"Missing note_id\", NULL);\n        return 200;\n    }\n\n    int note_id = atoi(note_id_str);\n    int rc = note_force_delete_note(note_id);\n    send_json(conn, rc == 0 ? 200 : 404, rc == 0 ? \"Note permanently deleted\" : \"Note not found\", NULL);\n    return 200;\n}",
+      "is_entry_point": false,
+      "taint_source": "mg_get_var, mg_read (HTTP请求参数)",
+      "taint_path": "HTTP请求参数 -> get_param() -> note_id_str -> atoi() -> note_id -> note_force_delete_note()"
+    },
+    {
+      "function_name": "get_param",
+      "file_path": "test_project/src/main_web.c",
+      "line_start": 20,
+      "line_end": 40,
+      "code_snippet": "static const char* get_param(struct mg_connection* conn, const char* name, char* buf, size_t buf_size) {\n    const struct mg_request_info* ri = mg_get_request_info(conn);\n\n    // 先尝试从 query_string 获取 (GET 请求)\n    if (ri->query_string) {\n        int len = mg_get_var(ri->query_string, strlen(ri->query_string), name, buf, buf_size);\n        if (len > 0) return buf;\n    }\n\n    // 尝试从 POST 数据获取\n    // 读取 POST 数据\n    char post_data[MAX_POST_DATA];\n    int post_len = mg_read(conn, post_data, sizeof(post_data) - 1);\n    if (post_len > 0) {\n        post_data[post_len] = '\\0';\n        int len = mg_get_var(post_data, post_len, name, buf, buf_size);\n        if (len > 0) return buf;\n    }\n\n    return NULL;\n}",
+      "is_entry_point": false,
+      "taint_source": "mg_get_var, mg_read (外部输入点)",
+      "taint_path": "外部HTTP输入 -> mg_get_var/mg_read -> buf参数 -> 调用者"
+    },
+    {
+      "function_name": "note_force_delete_note",
+      "file_path": "test_project/src/note_logic.c",
+      "line_start": 156,
+      "line_end": 158,
+      "code_snippet": "int note_force_delete_note(int note_id) {\n    return db_note_force_delete(note_id);\n}",
+      "is_entry_point": false,
+      "taint_source": "note_id (来自HTTP请求)",
+      "taint_path": "note_id -> db_note_force_delete()"
+    }
+  ],
+  "audit_results": [
+    {
+      "vulnerability_type": "path_traversal",
+      "is_vulnerable": true,
+      "confidence": "high",
+      "description": "在 handle_upload_logo 函数中存在路径遍历漏洞。该函数直接将用户输入的 filename 参数拼接到文件路径中，未进行任何路径验证或过滤。攻击者可以通过构造包含 '../' 的恶意文件名来遍历到任意目录，实现任意文件写入。",
+      "taint_flow": "HTTP请求参数(filename) -> get_param() -> filename变量 -> snprintf() -> filepath -> fopen() -> 文件系统操作",
+      "recommendation": "1. 对用户输入的filename进行严格的路径验证，过滤 '../' 等路径遍历字符；2. 使用白名单机制限制允许的文件名格式；3. 对最终文件路径进行规范化处理，确保不会超出指定目录；4. 考虑使用安全的文件操作API，如openat等。",
+      "code_map": [
+        {
+          "function_name": "handle_force_delete_note",
+          "file_path": "test_project/src/rpc.c",
+          "line_start": 209,
+          "line_end": 220,
+          "code_snippet": "static int handle_force_delete_note(const rpc_request_t* request, rpc_response_t* response) {\n    int rc = db_note_force_delete(request->note_id);\n    if (rc != 0) {\n        response->status = RPC_ERROR_NOT_FOUND;\n        snprintf(response->message, sizeof(response->message), \"Failed to permanently delete note\");\n        return -1;\n    }\n\n    response->status = RPC_SUCCESS;\n    snprintf(response->message, sizeof(response->message), \"Note permanently deleted\");\n    return 0;\n}",
+          "is_entry_point": true,
+          "taint_source": "request->note_id (来自HTTP请求参数)",
+          "taint_path": "HTTP请求参数 -> rpc_request_t.note_id -> db_note_force_delete()"
+        },
+        {
+          "function_name": "db_note_force_delete",
+          "file_path": "test_project/src/db.c",
+          "line_start": 579,
+          "line_end": 590,
+          "code_snippet": "int db_note_force_delete(int note_id) {\n    if (g_db == NULL) return -1;\n\n    sqlite3_stmt* stmt;\n    int rc = sqlite3_prepare_v2(g_db, FORCE_DELETE_NOTE, -1, &stmt, NULL);\n    if (rc != SQLITE_OK) return -1;\n\n    sqlite3_bind_int(stmt, 1, note_id);\n\n    rc = sqlite3_step(stmt);\n    sqlite3_finalize(stmt);",
+          "is_entry_point": false,
+          "taint_source": "note_id (来自handle_force_delete_note)",
+          "taint_path": "note_id -> sqlite3_bind_int() -> SQL查询执行"
+        },
+        {
+          "function_name": "handle_force_delete_note (HTTP接口)",
+          "file_path": "test_project/src/main_web.c",
+          "line_start": 260,
+          "line_end": 270,
+          "code_snippet": "static int handle_force_delete_note(struct mg_connection* conn, void* cbdata) {\n    char note_id_str[32];\n    if (!get_param(conn, \"note_id\", note_id_str, sizeof(note_id_str))) {\n        send_json(conn, 400, \"Missing note_id\", NULL);\n        return 200;\n    }\n\n    int note_id = atoi(note_id_str);\n    int rc = note_force_delete_note(note_id);\n    send_json(conn, rc == 0 ? 200 : 404, rc == 0 ? \"Note permanently deleted\" : \"Note not found\", NULL);\n    return 200;\n}",
+          "is_entry_point": false,
+          "taint_source": "mg_get_var, mg_read (HTTP请求参数)",
+          "taint_path": "HTTP请求参数 -> get_param() -> note_id_str -> atoi() -> note_id -> note_force_delete_note()"
+        },
+        {
+          "function_name": "get_param",
+          "file_path": "test_project/src/main_web.c",
+          "line_start": 20,
+          "line_end": 40,
+          "code_snippet": "static const char* get_param(struct mg_connection* conn, const char* name, char* buf, size_t buf_size) {\n    const struct mg_request_info* ri = mg_get_request_info(conn);\n\n    // 先尝试从 query_string 获取 (GET 请求)\n    if (ri->query_string) {\n        int len = mg_get_var(ri->query_string, strlen(ri->query_string), name, buf, buf_size);\n        if (len > 0) return buf;\n    }\n\n    // 尝试从 POST 数据获取\n    // 读取 POST 数据\n    char post_data[MAX_POST_DATA];\n    int post_len = mg_read(conn, post_data, sizeof(post_data) - 1);\n    if (post_len > 0) {\n        post_data[post_len] = '\\0';\n        int len = mg_get_var(post_data, post_len, name, buf, buf_size);\n        if (len > 0) return buf;\n    }\n\n    return NULL;\n}",
+          "is_entry_point": false,
+          "taint_source": "mg_get_var, mg_read (外部输入点)",
+          "taint_path": "外部HTTP输入 -> mg_get_var/mg_read -> buf参数 -> 调用者"
+        },
+        {
+          "function_name": "note_force_delete_note",
+          "file_path": "test_project/src/note_logic.c",
+          "line_start": 156,
+          "line_end": 158,
+          "code_snippet": "int note_force_delete_note(int note_id) {\n    return db_note_force_delete(note_id);\n}",
+          "is_entry_point": false,
+          "taint_source": "note_id (来自HTTP请求)",
+          "taint_path": "note_id -> db_note_force_delete()"
+        }
+      ]
+    }
+  ],
+  "exploit_results": [
+    {
+      "vulnerability_type": "path_traversal",
+      "success": false,
+      "poc_command": "",
+      "output": "达到最大轮数",
+      "error": null
+    }
+  ],
+  "_checkpoint_meta": {
+    "saved_at": "2026-03-19T03:25:44.263251",
+    "func_name": "handle_force_delete_note",
+    "file_path": "test_project/src/rpc.c"
+  }
+}

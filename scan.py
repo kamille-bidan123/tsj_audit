@@ -332,8 +332,6 @@ def output_results(results: List[FunctionInfo], output_format: str = "text"):
         for i, r in enumerate(results, 1):
             print(f"[{i}] {r.func_name}")
             print(f"    文件：{r.file_path}:{r.start_line}-{r.end_line}")
-            print(f"    类型：{r.project_type}")
-            print(f"    攻击面：{r.attack_surface}")
             if r.code_snippet:
                 print(f"    代码片段:")
                 for line in r.code_snippet.split('\n')[:10]:

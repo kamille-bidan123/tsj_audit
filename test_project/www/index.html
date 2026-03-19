@@ -1,1 +1,179 @@
-<\!DOCTYPE html><html><head><title>CivetWeb Test</title></head><body><h1>CivetWeb Test Server</h1></body></html>
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>记事本 - 登录</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <style>
+        body {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+        }
+        .login-card {
+            background: rgba(255,255,255,0.95);
+            border-radius: 15px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+        }
+        .input-group { margin-bottom: 20px; }
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="row justify-content-center">
+            <div class="col-md-5">
+                <div class="login-card p-4">
+                    <h2 class="text-center mb-4">记事本应用</h2>
+                    <p class="text-center text-muted">欢迎回来，请登录您的账户</p>
+                    <form id="loginForm">
+                        <div class="input-group">
+                            <label class="form-label">用户名</label>
+                            <input type="text" class="form-control" id="username" required>
+                        </div>
+                        <div class="input-group">
+                            <label class="form-label">密码</label>
+                            <input type="password" class="form-control" id="password" required>
+                        </div>
+                        <div id="loginError" class="alert alert-danger d-none"></div>
+                        <button type="submit" class="btn btn-primary w-100">登录</button>
+                    </form>
+                    <hr class="my-4">
+                    <div class="text-center">
+                        <p class="mb-2">还没有账号？<a href="#" onclick="showRegister()">立即注册</a></p>
+                        <p><a href="#" onclick="showForgotPassword()">忘记密码？</a></p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" id="registerModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header"><h5 class="modal-title">注册新账户</h5></div>
+                <div class="modal-body">
+                    <form id="registerForm">
+                        <div class="mb-3"><label class="form-label">用户名</label><input type="text" class="form-control" id="regUsername" required></div>
+                        <div class="mb-3"><label class="form-label">密码</label><input type="password" class="form-control" id="regPassword" required></div>
+                        <div class="mb-3"><label class="form-label">邮箱</label><input type="email" class="form-control" id="regEmail" required></div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-primary" onclick="register()">注册</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" id="forgotModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header"><h5 class="modal-title">重置密码</h5></div>
+                <div class="modal-body">
+                    <ul class="nav nav-tabs" id="forgotTabs">
+                        <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#checkOld">验证旧密码</button></li>
+                        <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#resetPassword">设置新密码</button></li>
+                    </ul>
+                    <div class="tab-content mt-3">
+                        <div class="tab-pane fade show active" id="checkOld">
+                            <div class="mb-3"><label class="form-label">用户 ID</label><input type="text" class="form-control" id="checkUserId"></div>
+                            <div class="mb-3"><label class="form-label">旧密码</label><input type="password" class="form-control" id="checkOldPassword"></div>
+                            <button class="btn btn-outline-secondary w-100" onclick="checkOldPassword()">验证</button>
+                        </div>
+                        <div class="tab-pane fade" id="resetPassword">
+                            <p class="text-muted">设置新密码（无需验证旧密码）</p>
+                            <div class="mb-3"><label class="form-label">用户 ID</label><input type="text" class="form-control" id="resetUserId"></div>
+                            <div class="mb-3"><label class="form-label">新密码</label><input type="password" class="form-control" id="newPassword"></div>
+                            <button class="btn btn-primary w-100" onclick="resetPassword()">重置</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = "http://localhost:8081";
+        const loginForm = document.getElementById('loginForm');
+        loginForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            try {
+                const res = await fetch(API_URL + '/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+                const data = await res.json();
+                if (data.status === 200) {
+                    localStorage.setItem('user_id', data.data.user_id);
+                    localStorage.setItem('username', data.data.username);
+                    alert('登录成功！');
+                    location.reload();
+                } else {
+                    document.getElementById('loginError').textContent = data.message;
+                    document.getElementById('loginError').classList.remove('d-none');
+                }
+            } catch (err) {
+                alert('请求失败：' + err.message);
+            }
+        });
+
+        function showRegister() { new bootstrap.Modal(document.getElementById('registerModal')).show(); }
+        function showForgotPassword() { new bootstrap.Modal(document.getElementById('forgotModal')).show(); }
+
+        async function register() {
+            const username = document.getElementById('regUsername').value;
+            const password = document.getElementById('regPassword').value;
+            const email = document.getElementById('regEmail').value;
+            try {
+                const res = await fetch(API_URL + '/register', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password, email })
+                });
+                const data = await res.json();
+                if (data.status === 201) alert('注册成功！');
+                else alert('注册失败：' + data.message);
+            } catch (err) { alert('请求失败：' + err.message); }
+        }
+
+        async function checkOldPassword() {
+            const userId = document.getElementById('checkUserId').value;
+            const oldPassword = document.getElementById('checkOldPassword').value;
+            try {
+                const res = await fetch(API_URL + '/check_old_password', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ user_id: userId, old_password: oldPassword })
+                });
+                const data = await res.json();
+                alert(data.message);
+            } catch (err) { alert('请求失败：' + err.message); }
+        }
+
+        async function resetPassword() {
+            const userId = document.getElementById('resetUserId').value;
+            const newPassword = document.getElementById('newPassword').value;
+            try {
+                const res = await fetch(API_URL + '/reset_password', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ user_id: userId, new_password: newPassword })
+                });
+                const data = await res.json();
+                alert(data.message);
+            } catch (err) { alert('请求失败：' + err.message); }
+        }
+    </script>
+</body>
+</html>

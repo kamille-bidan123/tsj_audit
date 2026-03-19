@@ -189,7 +189,18 @@ class TraceAgent:
             print(
                 f"[TraceAgent] 执行扫描：{scan_path} {code_path}", file=sys.stderr)
 
-        results = scan_module.scan_directory(code_path)
+        raw_results = scan_module.scan_directory(code_path)
+
+        # 将字典转换为 FunctionInfo 对象
+        results = []
+        for item in raw_results:
+            if isinstance(item, dict):
+                # 字典转 FunctionInfo
+                results.append(FunctionInfo(**item))
+            else:
+                # 已经是 FunctionInfo 对象
+                results.append(item)
+
         self._scan_results = results
         return results
 

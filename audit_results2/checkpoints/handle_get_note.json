@@ -1,0 +1,98 @@
+{
+  "function_info": {
+    "func_name": "handle_get_note",
+    "file_path": "test_project/src/rpc.c",
+    "start_line": 125,
+    "end_line": 139,
+    "code_snippet": "int handle_get_note(const rpc_request_t* request, rpc_response_t* response) {\n    Note note;\n    int rc = db_note_get_by_id(request->note_id, &note);\n    if (rc != 0) {\n        response->status = RPC_ERROR_NOT_FOUND;\n        snprintf(response->message, sizeof(response->message), \"Note not found\");\n        return -1;\n    }\n\n    response->status = RPC_SUCCESS;\n    response->note_id = note.id;\n    strncpy(response->notes_data, note.content, sizeof(response->notes_data) - 1);\n    snprintf(response->message, sizeof(response->message), \"OK\");\n    return 0;\n}",
+    "input": "HTTP 请求参数"
+  },
+  "code_map": [
+    {
+      "function_name": "handle_get_note",
+      "file_path": "test_project/src/rpc.c",
+      "line_start": 125,
+      "line_end": 139,
+      "code_snippet": "static int handle_get_note(const rpc_request_t* request, rpc_response_t* response) {\n    Note note;\n    int rc = db_note_get_by_id(request->note_id, &note);\n    if (rc != 0) {\n        response->status = RPC_ERROR_NOT_FOUND;\n        snprintf(response->message, sizeof(response->message), \"Note not found\");\n        return -1;\n    }\n\n    response->status = RPC_SUCCESS;\n    response->note_id = note.id;\n    strncpy(response->notes_data, note.content, sizeof(response->notes_data) - 1);\n    snprintf(response->message, sizeof(response->message), \"OK\");\n    return 0;\n}",
+      "is_entry_point": true,
+      "taint_source": "request->note_id",
+      "taint_path": "外部HTTP请求参数 -> rpc_request_t.note_id -> db_note_get_by_id参数 -> 数据库查询"
+    },
+    {
+      "function_name": "db_note_get_by_id",
+      "file_path": "test_project/src/db.c",
+      "line_start": 437,
+      "line_end": 470,
+      "code_snippet": "int db_note_get_by_id(int note_id, Note* note) {\n    if (g_db == NULL) return -1;\n\n    sqlite3_stmt* stmt;\n    int rc = sqlite3_prepare_v2(g_db, SELECT_NOTE_BY_ID, -1, &stmt, NULL);\n    if (rc != SQLITE_OK) return -1;\n\n    sqlite3_bind_int(stmt, 1, note_id);\n\n    if (sqlite3_step(stmt) == SQLITE_ROW) {\n        note->id = sqlite3_column_int(stmt, 0);\n        note->user_id = sqlite3_column_int(stmt, 1);\n        strncpy(note->title, (const char*)sqlite3_column_text(stmt, 2), MAX_NOTE_TITLE_LEN - 1);\n\n        if (sqlite3_column_text(stmt, 3)) {\n            strncpy(note->content, (const char*)sqlite3_column_text(stmt, 3), MAX_NOTE_CONTENT_LEN - 1);\n        } else {\n            note->content[0] = '\\0';\n        }\n\n        note->is_deleted = sqlite3_column_int(stmt, 4);\n\n        if (sqlite3_column_text(stmt, 5)) {\n            strncpy(note->created_at, (const char*)sqlite3_column_text(stmt, 5), 31);\n        } else {\n            note->created_at[0] = '\\0';\n        }\n\n        if (sqlite3_column_text(stmt, 6)) {\n            strncpy(note->updated_at, (const char*)sqlite3_column_text(stmt, 6), 31);\n        } else {\n            note->updated_at[0] = '\\0';\n        }",
+      "is_entry_point": false,
+      "taint_source": "note_id参数",
+      "taint_path": "SQL查询参数 -> sqlite3_bind_int -> 数据库查询结果 -> Note结构体"
+    },
+    {
+      "function_name": "get_param",
+      "file_path": "test_project/src/main_web.c",
+      "line_start": 20,
+      "line_end": 40,
+      "code_snippet": "static const char* get_param(struct mg_connection* conn, const char* name, char* buf, size_t buf_size) {\n    const struct mg_request_info* ri = mg_get_request_info(conn);\n\n    // 先尝试从 query_string 获取 (GET 请求)\n    if (ri->query_string) {\n        int len = mg_get_var(ri->query_string, strlen(ri->query_string), name, buf, buf_size);\n        if (len > 0) return buf;\n    }\n\n    // 尝试从 POST 数据获取\n    // 读取 POST 数据\n    char post_data[MAX_POST_DATA];\n    int post_len = mg_read(conn, post_data, sizeof(post_data) - 1);\n    if (post_len > 0) {\n        post_data[post_len] = '\\0';\n        int len = mg_get_var(post_data, post_len, name, buf, buf_size);\n        if (len > 0) return buf;\n    }\n\n    return NULL;\n}",
+      "is_entry_point": false,
+      "taint_source": "mg_get_var, mg_read",
+      "taint_path": "HTTP请求参数 -> 查询字符串或POST数据 -> 参数提取"
+    }
+  ],
+  "audit_results": [
+    {
+      "vulnerability_type": "path_traversal",
+      "is_vulnerable": true,
+      "confidence": "high",
+      "description": "在 handle_upload_logo 函数中存在路径遍历漏洞。该函数直接将用户输入的 filename 参数拼接到文件路径中，未进行任何路径验证或过滤，攻击者可以通过包含 '../' 序列的文件名来访问或创建任意文件。",
+      "taint_flow": "HTTP请求参数(filename) -> get_param函数 -> handle_upload_logo函数 -> snprintf路径拼接 -> fopen文件操作",
+      "recommendation": "1. 对用户输入的文件名进行严格的验证和过滤，移除或拒绝包含 '../' 等路径遍历序列的输入；2. 使用白名单机制限制允许的文件名字符集；3. 使用安全的路径拼接函数，确保最终路径不会超出预期的目录范围；4. 对最终路径进行规范化处理，并检查是否在允许的目录内。",
+      "code_map": [
+        {
+          "function_name": "handle_get_note",
+          "file_path": "test_project/src/rpc.c",
+          "line_start": 125,
+          "line_end": 139,
+          "code_snippet": "static int handle_get_note(const rpc_request_t* request, rpc_response_t* response) {\n    Note note;\n    int rc = db_note_get_by_id(request->note_id, &note);\n    if (rc != 0) {\n        response->status = RPC_ERROR_NOT_FOUND;\n        snprintf(response->message, sizeof(response->message), \"Note not found\");\n        return -1;\n    }\n\n    response->status = RPC_SUCCESS;\n    response->note_id = note.id;\n    strncpy(response->notes_data, note.content, sizeof(response->notes_data) - 1);\n    snprintf(response->message, sizeof(response->message), \"OK\");\n    return 0;\n}",
+          "is_entry_point": true,
+          "taint_source": "request->note_id",
+          "taint_path": "外部HTTP请求参数 -> rpc_request_t.note_id -> db_note_get_by_id参数 -> 数据库查询"
+        },
+        {
+          "function_name": "db_note_get_by_id",
+          "file_path": "test_project/src/db.c",
+          "line_start": 437,
+          "line_end": 470,
+          "code_snippet": "int db_note_get_by_id(int note_id, Note* note) {\n    if (g_db == NULL) return -1;\n\n    sqlite3_stmt* stmt;\n    int rc = sqlite3_prepare_v2(g_db, SELECT_NOTE_BY_ID, -1, &stmt, NULL);\n    if (rc != SQLITE_OK) return -1;\n\n    sqlite3_bind_int(stmt, 1, note_id);\n\n    if (sqlite3_step(stmt) == SQLITE_ROW) {\n        note->id = sqlite3_column_int(stmt, 0);\n        note->user_id = sqlite3_column_int(stmt, 1);\n        strncpy(note->title, (const char*)sqlite3_column_text(stmt, 2), MAX_NOTE_TITLE_LEN - 1);\n\n        if (sqlite3_column_text(stmt, 3)) {\n            strncpy(note->content, (const char*)sqlite3_column_text(stmt, 3), MAX_NOTE_CONTENT_LEN - 1);\n        } else {\n            note->content[0] = '\\0';\n        }\n\n        note->is_deleted = sqlite3_column_int(stmt, 4);\n\n        if (sqlite3_column_text(stmt, 5)) {\n            strncpy(note->created_at, (const char*)sqlite3_column_text(stmt, 5), 31);\n        } else {\n            note->created_at[0] = '\\0';\n        }\n\n        if (sqlite3_column_text(stmt, 6)) {\n            strncpy(note->updated_at, (const char*)sqlite3_column_text(stmt, 6), 31);\n        } else {\n            note->updated_at[0] = '\\0';\n        }",
+          "is_entry_point": false,
+          "taint_source": "note_id参数",
+          "taint_path": "SQL查询参数 -> sqlite3_bind_int -> 数据库查询结果 -> Note结构体"
+        },
+        {
+          "function_name": "get_param",
+          "file_path": "test_project/src/main_web.c",
+          "line_start": 20,
+          "line_end": 40,
+          "code_snippet": "static const char* get_param(struct mg_connection* conn, const char* name, char* buf, size_t buf_size) {\n    const struct mg_request_info* ri = mg_get_request_info(conn);\n\n    // 先尝试从 query_string 获取 (GET 请求)\n    if (ri->query_string) {\n        int len = mg_get_var(ri->query_string, strlen(ri->query_string), name, buf, buf_size);\n        if (len > 0) return buf;\n    }\n\n    // 尝试从 POST 数据获取\n    // 读取 POST 数据\n    char post_data[MAX_POST_DATA];\n    int post_len = mg_read(conn, post_data, sizeof(post_data) - 1);\n    if (post_len > 0) {\n        post_data[post_len] = '\\0';\n        int len = mg_get_var(post_data, post_len, name, buf, buf_size);\n        if (len > 0) return buf;\n    }\n\n    return NULL;\n}",
+          "is_entry_point": false,
+          "taint_source": "mg_get_var, mg_read",
+          "taint_path": "HTTP请求参数 -> 查询字符串或POST数据 -> 参数提取"
+        }
+      ]
+    }
+  ],
+  "exploit_results": [
+    {
+      "vulnerability_type": "path_traversal",
+      "success": false,
+      "poc_command": "",
+      "output": "达到最大轮数",
+      "error": null
+    }
+  ],
+  "_checkpoint_meta": {
+    "saved_at": "2026-03-19T03:05:52.786976",
+    "func_name": "handle_get_note",
+    "file_path": "test_project/src/rpc.c"
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "function_info": {
+    "func_name": "handle_ping",
+    "file_path": "test_project/src/rpc.c",
+    "start_line": 19,
+    "end_line": 23,
+    "code_snippet": "int handle_ping(const rpc_request_t* request, rpc_response_t* response) {\n    response->status = RPC_SUCCESS;\n    snprintf(response->message, sizeof(response->message), \"pong\");\n    return 0;\n}",
+    "input": "HTTP 请求参数"
+  },
+  "code_map": [
+    {
+      "function_name": "handle_ping",
+      "file_path": "src/rpc.c",
+      "line_start": 19,
+      "line_end": 23,
+      "code_snippet": "static int handle_ping(const rpc_request_t* request, rpc_response_t* response) {\n    response->status = RPC_SUCCESS;\n    snprintf(response->message, sizeof(response->message), \"pong\");\n    return 0;\n}",
+      "is_entry_point": true,
+      "taint_source": "无外部输入污染",
+      "taint_path": "该函数为简单的ping-pong响应，不处理任何外部输入数据，无污染路径"
+    }
+  ],
+  "audit_results": [],
+  "exploit_results": [],
+  "_checkpoint_meta": {
+    "saved_at": "2026-03-19T02:53:31.530005",
+    "func_name": "handle_ping",
+    "file_path": "test_project/src/rpc.c"
+  }
+}
