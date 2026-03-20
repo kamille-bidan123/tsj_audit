@@ -5,7 +5,6 @@
 `TagsTool` 使用 `ctags` 和 `cscope` 提供代码导航功能：
 - `go_to_def <symbol>` - 跳转到符号定义
 - `find_refs <symbol>` - 查找符号引用
-- `list_symbols [pattern]` - 列出符号
 
 ## 使用前准备
 
@@ -75,20 +74,6 @@ find_refs hello
 /path/to/file.c:line_number: 代码内容
 ```
 
-### list_symbols
-
-列出索引中的符号。
-
-```bash
-# 列出所有符号
-list_symbols
-
-# 模糊搜索
-list_symbols open
-
-# 搜索特定模式
-list_symbols init
-```
 
 ## 使用示例
 
@@ -104,8 +89,6 @@ ToolExecutor.call("go_to_def strcpy")
 # 3. 查找所有使用位置
 ToolExecutor.call("find_refs strcpy")
 
-# 4. 查看所有相关符号
-ToolExecutor.call("list_symbols str")
 ```
 
 ### LLM 调用示例
@@ -124,12 +107,6 @@ ToolExecutor.call("list_symbols str")
 }
 ```
 
-```json
-{
-    "command": "list_symbols vuln",
-    "logic": "搜索包含 vuln 的符号，查找可能的漏洞相关代码"
-}
-```
 
 ## 依赖
 

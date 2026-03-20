@@ -28,7 +28,7 @@ class PathTraversalAgent:
 
     EXPLORATION_TOOLS = [
         "read_file", "list_dir", "search_code",
-        "go_to_def", "find_refs", "list_symbols",
+        "go_to_def", "find_refs",
         "skill",  # Skills 工具
         "submit",
     ]
