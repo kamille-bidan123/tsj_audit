@@ -97,7 +97,7 @@ class LLMClient:
 
         # 指数退避重试
         max_retries = 5
-        base_delay = 2  # 初始延迟秒数
+        base_delay = 8  # 初始延迟秒数
 
         for attempt in range(max_retries):
             try:
@@ -105,8 +105,7 @@ class LLMClient:
             except Exception as e:
                 # 检查是否是限流错误（429）
                 error_str = str(e)
-                is_rate_limit = "429" in error_str or "rate limit" in error_str.lower() or "throttling" in error_str.lower()
-
+                print(f'api error:{error_str}')
                 if is_rate_limit and attempt < max_retries - 1:
                     delay = base_delay * (2 ** attempt)  # 指数退避: 2, 4, 8, 16, 32
                     print(f"\n[警告] API 限流，等待 {delay} 秒后重试 (尝试 {attempt + 1}/{max_retries})", file=sys.stderr)
@@ -190,7 +189,7 @@ class LLMClient:
 
         # 指数退避重试
         max_retries = 5
-        base_delay = 2  # 初始延迟秒数
+        base_delay = 8  # 初始延迟秒数
 
         for attempt in range(max_retries):
             try:
@@ -198,9 +197,8 @@ class LLMClient:
             except Exception as e:
                 # 检查是否是限流错误（429）
                 error_str = str(e)
-                is_rate_limit = "429" in error_str or "rate limit" in error_str.lower() or "throttling" in error_str.lower()
-
-                if is_rate_limit and attempt < max_retries - 1:
+                print(f'api error:{error_str}')
+                if  attempt < max_retries - 1:
                     delay = base_delay * (2 ** attempt)  # 指数退避: 2, 4, 8, 16, 32
                     print(f"\n[警告] API 限流，等待 {delay} 秒后重试 (尝试 {attempt + 1}/{max_retries})", file=sys.stderr)
                     time.sleep(delay)
@@ -219,10 +217,11 @@ class LLMClient:
                 if choice.message:
                     full_content = choice.message.content or ""
                     # 推理内容（部分模型支持）
+                    print(f'full_content\n:{full_content}')
                     reasoning_content = getattr(choice.message, 'reasoning_content', '') or \
                                         getattr(choice.message, 'reasoning', '') or \
                                         getattr(choice.message, 'thought', '') or ""
-
+                    print(f'🤔:\n{reasoning_content}')
                     # 工具调用
                     if choice.message.tool_calls:
                         tool_calls = []

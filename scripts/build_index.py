@@ -52,42 +52,6 @@ def find_source_files(project_path: str) -> List[str]:
     return sorted(files)
 
 
-def build_ctags(project_path: str, files: List[str], verbose: bool = False) -> bool:
-    """
-    构建 ctags 索引
-
-    ctags 不支持增量更新，直接全量生成
-    """
-    tags_file = os.path.join(project_path, "tags")
-    filelist_path = os.path.join(project_path, ".ctags-files")
-
-    # 写入文件列表（使用绝对路径）
-    abs_files = [os.path.join(project_path, f) for f in files]
-    with open(filelist_path, "w") as f:
-        f.write("\n".join(abs_files))
-
-    # 使用 -L 选项时，需要用空格而不是等号
-    cmd = [
-        "ctags",
-        "--languages=C,C++",
-        "--c-kinds=+p",
-        "--fields=+n",
-        "-f", tags_file,
-        "-L", filelist_path,
-    ]
-
-    if verbose:
-        print(f"执行：{' '.join(cmd)}")
-
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-
-    if result.returncode != 0 and not os.path.exists(tags_file):
-        print(f"ctags 失败：{result.stderr}", file=sys.stderr)
-        return False
-
-    return True
-
-
 def build_cscope_incremental(project_path: str, files: List[str], verbose: bool = False) -> bool:
     """
     增量构建 cscope 索引
@@ -151,13 +115,12 @@ def build_cscope_incremental(project_path: str, files: List[str], verbose: bool 
 
 def build_index_with_progress(
     project_path: str,
-    verbose: bool = False,
-    show_progress: bool = True
+    verbose: bool = False
 ) -> bool:
     """
-    构建索引并显示进度
+    构建索引
 
-    ctags 分批处理显示进度，cscope 一次性构建（速度较快）
+    ctags 和 cscope 都一次性构建
     """
     print(f"扫描项目：{project_path}")
 
@@ -171,11 +134,8 @@ def build_index_with_progress(
 
     print(f"找到 {total} 个 C/C++ 文件")
 
-    # 2. 构建 ctags（分批显示进度）
-    if show_progress:
-        print("\n[1/2] 构建 ctags 索引...")
-    else:
-        print("构建 ctags 索引...")
+    # 2. 构建 ctags
+    print("\n构建 ctags 索引...")
 
     tags_file = os.path.join(project_path, "tags")
     filelist_path = os.path.join(project_path, ".ctags-files")
@@ -185,60 +145,24 @@ def build_index_with_progress(
     with open(filelist_path, "w") as f:
         f.write("\n".join(abs_files))
 
-    if show_progress and total > 100:
-        # 分批 ctags，模拟进度
-        batch_size = max(50, total // 20)
-        with open(tags_file, "w") as tf:
-            tf.write("")  # 清空
-
-        for i in range(0, total, batch_size):
-            batch = abs_files[i:i + batch_size]
-            batch_filelist = os.path.join(project_path, ".ctags-batch")
-
-            with open(batch_filelist, "w") as f:
-                f.write("\n".join(batch))
-
-            cmd = [
-                "ctags",
-                "--languages=C,C++",
-                "--c-kinds=+p",
-                "--fields=+n",
-                "-f", tags_file,
-                "-L", batch_filelist,
-                "-a",  # 追加模式
-            ]
-            subprocess.run(cmd, capture_output=True, timeout=300)
-
-            processed = min(i + batch_size, total)
-            percent = (processed * 100) // total
-            print(f"  进度：{percent}% ({processed}/{total})", end="\r")
-
-        print()  # 换行
-        # 清理临时文件
-        if os.path.exists(os.path.join(project_path, ".ctags-batch")):
-            os.remove(os.path.join(project_path, ".ctags-batch"))
-    else:
-        # 一次性构建
-        cmd = [
-            "ctags",
-            "--languages=C,C++",
-            "--c-kinds=+p",
-            "--fields=+n",
-            "-f", tags_file,
-            "-L", filelist_path,
-        ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-        if result.returncode != 0 and not os.path.exists(tags_file):
-            print(f"ctags 失败：{result.stderr}", file=sys.stderr)
-            return False
+    # 一次性构建
+    cmd = [
+        "ctags",
+        "--languages=C,C++",
+        "--c-kinds=+p",
+        "--fields=+n",
+        "-f", tags_file,
+        "-L", filelist_path,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+    if result.returncode != 0 and not os.path.exists(tags_file):
+        print(f"ctags 失败：{result.stderr}", file=sys.stderr)
+        return False
 
     print(f"  ctags: 完成 ({total} 文件)")
 
-    # 3. 构建 cscope（一次性构建）
-    if show_progress:
-        print("\n[2/2] 构建 cscope 索引...")
-    else:
-        print("构建 cscope 索引...")
+    # 3. 构建 cscope
+    print("\n构建 cscope 索引...")
 
     cscope_filelist = os.path.join(project_path, ".cscope-files")
     cscope_out = os.path.join(project_path, "cscope.out")
@@ -277,8 +201,8 @@ def build_index_with_progress(
     tags_ok = os.path.exists(tags_file)
 
     print(f"\n索引构建完成!")
-    print(f"  tags: {'✓' if tags_ok else '✗'}")
-    print(f"  cscope: {'✓' if cscope_ok else '✗'}")
+    print(f"  tags: {'OK' if tags_ok else 'FAIL'}")
+    print(f"  cscope: {'OK' if cscope_ok else 'FAIL'}")
 
     return tags_ok and cscope_ok
 
@@ -292,7 +216,6 @@ def clean_index(project_path: str) -> bool:
         "cscope.out.po",
         ".ctags-files",
         ".cscope-files",
-        ".ctags-batch",
     ]
 
     removed = []
@@ -321,7 +244,6 @@ def main():
     python build_index.py .                    # 当前目录
     python build_index.py /app/src             # 指定目录
     python build_index.py /app/src -v          # 详细模式
-    python build_index.py /app/src --no-progress  # 不显示进度
     python build_index.py /app/src --clean     # 删除索引文件
         """,
     )
@@ -335,11 +257,6 @@ def main():
         "-v", "--verbose",
         action="store_true",
         help="显示详细输出",
-    )
-    parser.add_argument(
-        "--no-progress",
-        action="store_true",
-        help="不显示进度条",
     )
     parser.add_argument(
         "--clean",
@@ -361,7 +278,6 @@ def main():
         success = build_index_with_progress(
             args.project_path,
             verbose=args.verbose,
-            show_progress=not args.no_progress,
         )
         sys.exit(0 if success else 1)
 

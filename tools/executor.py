@@ -16,9 +16,12 @@ class ToolExecutor:
         Returns:
             执行结果
         """
+        print(f'tool call:\nfunction_name:{function_name}\nargs:{arguments}')
         tool_class = ToolRegistry.get_tool_for_command(function_name)
         if tool_class is None:
             return f"错误：未知命令 '{function_name}'"
 
         tool = tool_class()
-        return tool.execute(function_name, arguments)
+        ret = tool.execute(function_name, arguments)
+        print('command ret:\n'+ret)
+        return ret

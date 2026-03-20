@@ -63,18 +63,6 @@ class TagsTool:
                 "required": ["symbol"],
             },
         },
-        "list_symbols": {
-            "description": "列出索引中的符号",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "pattern": {
-                        "type": "string",
-                        "description": "过滤模式（可选）",
-                    },
-                },
-            },
-        },
     }
 
     def _get_project_path(self) -> str:
@@ -87,8 +75,6 @@ class TagsTool:
             return self._go_to_def(args)
         elif command == "find_refs":
             return self._find_refs(args)
-        elif command == "list_symbols":
-            return self._list_symbols(args)
         else:
             return f"错误：未知命令 '{command}'"
 
@@ -307,42 +293,3 @@ class TagsTool:
             return "\n".join([f"{r['file']}:{r['line']}" for r in all_results[:5]])
 
         return "\n".join(output_lines)
-
-    def _list_symbols(self, args: dict) -> str:
-        """列出索引中的符号"""
-        pattern = args.get("pattern")
-        project_path = self._get_project_path()
-        tags_file = os.path.join(project_path, "tags")
-
-        if not os.path.exists(tags_file):
-            return "错误：tags 文件不存在（请先运行 python scripts/build_index.py）"
-
-        symbols = []
-        try:
-            with open(tags_file, "r") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line or line.startswith("!"):
-                        continue
-
-                    parts = line.split("\t")
-                    if parts:
-                        symbol = parts[0]
-                        if pattern is None or pattern.lower() in symbol.lower():
-                            symbols.append(symbol)
-        except Exception as e:
-            return f"错误：{e}"
-
-        if not symbols:
-            if pattern:
-                return f"未找到匹配 '{pattern}' 的符号"
-            return "索引为空"
-
-        # 去重并排序
-        symbols = sorted(set(symbols))
-
-        # 限制输出数量
-        if len(symbols) > 50:
-            return "\n".join(symbols[:50]) + f"\n... 还有 {len(symbols) - 50} 个符号"
-
-        return "\n".join(symbols)
