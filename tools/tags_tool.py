@@ -222,7 +222,7 @@ class TagsTool:
 
         if not definitions:
             # 尝试从 cscope 查找
-            cscope_defs = self._search_cscope(symbol, query_type=0)
+            cscope_defs = self._search_cscope(symbol, query_type=1)
             for d in cscope_defs:
                 definitions.append({
                     "symbol": symbol,
@@ -255,7 +255,7 @@ class TagsTool:
             return f"错误：索引不存在，请先运行 python scripts/build_index.py 构建索引"
 
         # 从 cscope 查找引用（使用 query 0 获取所有信息）
-        all_results = self._search_cscope(symbol, query_type=0)
+        all_results = self._search_cscope(symbol, query_type=2)
 
         if not all_results:
             return f"未找到符号 '{symbol}' 的引用"
@@ -280,16 +280,16 @@ class TagsTool:
 
         # 格式化输出
         output_lines = []
-        for ref in refs[:20]:  # 最多返回 20 个
+        for ref in refs:  # 返回所有引用
             file_path = ref.get("file", "unknown")
             line_num = ref.get("line", 0)
             content = ref.get("content", "").strip()
             output_lines.append(f"{file_path}:{line_num}: {content}")
 
-        if len(refs) > 20:
-            output_lines.append(f"... 还有 {len(refs) - 20} 个引用")
+        if len(refs) > 100:
+            output_lines.append(f"... 还有 {len(refs) - 100} 个引用")
 
         if not output_lines:
-            return "\n".join([f"{r['file']}:{r['line']}" for r in all_results[:5]])
+            return "\n".join([f"{r['file']}:{r['line']}" for r in all_results])
 
         return "\n".join(output_lines)

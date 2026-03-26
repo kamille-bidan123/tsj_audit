@@ -106,9 +106,9 @@ class LLMClient:
                 # 检查是否是限流错误（429）
                 error_str = str(e)
                 print(f'api error:{error_str}')
-                if is_rate_limit and attempt < max_retries - 1:
+                if  attempt < max_retries - 1:
                     delay = base_delay * (2 ** attempt)  # 指数退避: 2, 4, 8, 16, 32
-                    print(f"\n[警告] API 限流，等待 {delay} 秒后重试 (尝试 {attempt + 1}/{max_retries})", file=sys.stderr)
+                    print(f"\n[警告] 报错{e}，等待 {delay} 秒后重试 (尝试 {attempt + 1}/{max_retries})", file=sys.stderr)
                     time.sleep(delay)
                     continue
                 else:

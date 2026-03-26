@@ -16,9 +16,11 @@ from datetime import datetime
 from tools.registry import ToolRegistry
 from tools.executor import ToolExecutor
 from cli import get_config_object
-
+import glob
+import utils.export_utils
 # 导入共享模型
 from models import FunctionInfo, CodeContext, TraceResult, AuditResult
+from utils.export_utils import merge_checkpoints_and_export
 
 
 class SubmitTool:
@@ -70,7 +72,6 @@ class TraceAgent:
 
     # 审计阶段使用的工具（sub-agent 调用）
     AUDIT_TOOLS = [
-        "audit",
         "submit",
     ]
 
@@ -78,9 +79,11 @@ class TraceAgent:
         self,
         project_path: str = ".",
         debug: bool = False,
+        output_dir: str = None,
     ):
         self.project_path = project_path
         self.debug = debug
+        self.output_dir = output_dir
 
         self._llm_client = None
         self._input_knowledge: Optional[str] = None
@@ -117,6 +120,34 @@ class TraceAgent:
 
         if self.debug:
             print(f"  [检查点] 已保存: {checkpoint_file}", file=sys.stderr)
+
+    def _save_conversation_history(self, agent_name: str, func_info: FunctionInfo, messages: List[Dict]):
+        """保存特定 agent 的对话历史"""
+        if not hasattr(self, 'output_dir') or not self.output_dir:
+            return  # 如果没有设置输出目录，则不保存
+
+        # 构建输出目录结构：output_dir/conversations/agent_name/function_name.json
+        conversations_dir = Path(self.output_dir) / "conversations" / agent_name
+        conversations_dir.mkdir(parents=True, exist_ok=True)
+
+        # 清理函数名中的非法字符
+        safe_func_name = "".join(c if c.isalnum() or c in ("_", "-") else "_" for c in func_info.func_name)
+
+        conversation_file = conversations_dir / f"{safe_func_name}.json"
+
+        # 准备保存对话历史
+        conversation_data = {
+            "function_info": func_info.model_dump(),
+            "conversation_history": messages,
+            "saved_at": datetime.now().isoformat(),
+            "agent": agent_name
+        }
+
+        with open(conversation_file, "w", encoding="utf-8") as f:
+            json.dump(conversation_data, f, indent=2, ensure_ascii=False)
+
+        if self.debug:
+            print(f"  [对话历史] {agent_name} 已保存: {conversation_file}", file=sys.stderr)
 
     def _load_checkpoint(self, output_dir: str, func_name: str) -> Optional[TraceResult]:
         """加载单个函数的审计检查点"""
@@ -171,35 +202,64 @@ class TraceAgent:
         return self._llm_client
 
 
-    def load_scan_results(self, scan_path: str,code_path: Optional[str] = None) -> List[FunctionInfo]:
-        """加载 scan.py 扫描结果"""
+    def load_scan_results(self, scan_path: str, code_path: Optional[str] = None) -> List[FunctionInfo]:
+        """加载 JSON 文件扫描结果"""
         if code_path is None:
             code_path = self.project_path
 
         scan_path = Path(scan_path)
 
         if not scan_path.exists():
-            raise FileNotFoundError(f"未找到 scan.py: {scan_path}")
+            raise FileNotFoundError(f"未找到扫描结果文件: {scan_path}")
 
-        spec = importlib.util.spec_from_file_location("scan_module", scan_path)
-        scan_module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(scan_module)
+        # 检查是否是 JSON 文件
+        if scan_path.suffix.lower() == '.json':
+            # 读取 JSON 文件
+            with open(scan_path, 'r', encoding='utf-8') as f:
+                raw_data = json.load(f)
 
-        if self.debug:
-            print(
-                f"[TraceAgent] 执行扫描：{scan_path} {code_path}", file=sys.stderr)
+            # 验证数据结构是否为 FunctionInfo 的列表
+            if not isinstance(raw_data, list):
+                raise ValueError(f"JSON 文件内容不是列表格式: {scan_path}")
 
-        raw_results = scan_module.scan_directory(code_path)
+            results = []
+            for idx, item in enumerate(raw_data):
+                if isinstance(item, dict):
+                    # 验证字典是否符合 FunctionInfo 结构
+                    try:
+                        function_info = FunctionInfo(**item)
+                        results.append(function_info)
+                    except Exception as e:
+                        raise ValueError(f"JSON 文件中第 {idx+1} 项不是有效的 FunctionInfo 结构: {str(e)}")
+                elif isinstance(item, FunctionInfo):
+                    # 已经是 FunctionInfo 对象
+                    results.append(item)
+                else:
+                    raise ValueError(f"JSON 文件中第 {idx+1} 项既不是字典也不是 FunctionInfo 对象")
+        else:
+            # 兼容旧的 Python 模块方式（如果需要的话）
+            if not scan_path.exists():
+                raise FileNotFoundError(f"未找到 scan.py: {scan_path}")
 
-        # 将字典转换为 FunctionInfo 对象
-        results = []
-        for item in raw_results:
-            if isinstance(item, dict):
-                # 字典转 FunctionInfo
-                results.append(FunctionInfo(**item))
-            else:
-                # 已经是 FunctionInfo 对象
-                results.append(item)
+            spec = importlib.util.spec_from_file_location("scan_module", scan_path)
+            scan_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(scan_module)
+
+            if self.debug:
+                print(
+                    f"[TraceAgent] 执行扫描：{scan_path} {code_path}", file=sys.stderr)
+
+            raw_results = scan_module.scan_directory(code_path)
+
+            # 将字典转换为 FunctionInfo 对象
+            results = []
+            for item in raw_results:
+                if isinstance(item, dict):
+                    # 字典转 FunctionInfo
+                    results.append(FunctionInfo(**item))
+                else:
+                    # 已经是 FunctionInfo 对象
+                    results.append(item)
 
         self._scan_results = results
         return results
@@ -361,13 +421,14 @@ class TraceAgent:
         # 添加 codemap 生成请求
         messages.append({
             "role": "user",
-            "content": f"""请根据以上探索信息，生成完整的 codemap，包含所有被污染的函数调用链。
+            "content": f"""请根据以上探索信息，生成完整的 codemap，包含所有被污染的函数调用链，并描述函数的主要业务逻辑。
 
 入口函数：{func_info.func_name}
 文件：{func_info.file_path}:{func_info.start_line}-{func_info.end_line}
 
 输出格式要求（JSON对象）：
 {{
+  "code_logic": "函数的业务逻辑描述",
   "code_map": [
     {{
       "function_name": "函数名",
@@ -413,6 +474,7 @@ class TraceAgent:
             if not json_str:
                 raise ValueError("未找到有效的 JSON 内容")
             data = json.loads(json_str)
+            code_logic = data.get("code_logic", "")
             items = data.get("code_map", [])
             code_map = [CodeContext.model_validate(item) for item in items]
         except (json.JSONDecodeError, Exception) as e:
@@ -421,6 +483,7 @@ class TraceAgent:
                 if response.content:
                     print(f"[响应内容] {response.content[:200]}...", file=sys.stderr)
             code_map = []
+            code_logic = ""
 
         # 将 codemap 响应添加到消息
         messages.append({
@@ -428,65 +491,33 @@ class TraceAgent:
             "content": response.content,
         })
 
-        # 审计阶段：追加提示词，切换工具集
-        messages.append({
-            "role": "user",
-            "content": """基于以上 codemap，请选择合适的审计类型进行分析：
-- command_injection: 命令注入漏洞审计（如 system、popen 等）
-- path_traversal: 路径遍历漏洞审计（如 fopen、open 等）
+        # 直接进入审计阶段，不需要额外的消息
+        if self.debug:
+            print(f"\n[审计阶段] 启动 AuditAgent 运行所有审计类型", file=sys.stderr)
 
-调用 audit 工具启动相应的审计 Agent。审计完成后调用 submit 结束。"""
-        })
-
-        # 单轮审计调用
-        audit_results = []
-        exploit_results = []
-        response = self.llm_client.chat(
-            messages=messages,
-            tools=ToolRegistry.to_openai_tools(self.AUDIT_TOOLS),
-            tool_choice="auto",
-            temperature=0.1,
+        # 调用 AuditAgent 进行审计（自动运行所有审计类型）
+        from agents.audit_agent import AuditAgent
+        audit_agent = AuditAgent(
+            function_info=func_info,
+            code_map=code_map,
+            project_path=self.project_path,
+            debug=self.debug,
+            output_dir=self.output_dir,
         )
 
-        if response.tool_calls:
-            for tc in response.tool_calls:
-                print(f"\n[审计工具调用] {tc['function']['name']}({tc['function']['arguments']})", file=sys.stderr)
-                func_name = tc["function"]["name"]
+        audit_results, exploit_results = audit_agent.audit()
 
-                if func_name == "audit":
-                    if self.debug:
-                        print(f"\n[审计阶段] 启动 AuditAgent", file=sys.stderr)
+        if self.debug:
+            print(f"  [审计结果] 总计发现 {len(audit_results)} 个潜在漏洞", file=sys.stderr)
+            for ar in audit_results:
+                print(f"    - {ar.vulnerability_type}: {ar.is_vulnerable} (置信度: {ar.confidence})", file=sys.stderr)
 
-                    # 获取审计类型参数
-                    audit_type = tc["function"]["arguments"].get("audit_type", "command_injection")
-
-                    if self.debug:
-                        print(f"  [类型] {audit_type}", file=sys.stderr)
-
-                    # 调用 AuditAgent 进行审计
-                    from agents.audit_agent import AuditAgent
-                    audit_agent = AuditAgent(
-                        audit_type=audit_type,
-                        function_info=func_info,
-                        code_map=code_map,
-                        project_path=self.project_path,
-                        debug=self.debug,
-                    )
-
-                    audit_result, exploit_result = audit_agent.audit()
-
-                    if audit_result:
-                        audit_results.append(audit_result)
-                        if self.debug:
-                            print(f"  [审计结果] 漏洞: {audit_result.is_vulnerable}, 置信度: {audit_result.confidence}", file=sys.stderr)
-
-                    if exploit_result:
-                        exploit_results.append(exploit_result)
-                        if self.debug:
-                            print(f"  [利用结果] 成功: {exploit_result.success}", file=sys.stderr)
+        # 保存 trace agent 的对话历史
+        self._save_conversation_history("trace_agent", func_info, messages)
 
         return TraceResult(
             function_info=func_info,
+            code_logic=code_logic,
             code_map=code_map,
             audit_results=audit_results,
             exploit_results=exploit_results,
@@ -511,6 +542,9 @@ class TraceAgent:
             审计结果会逐个保存到 output_dir/checkpoints/ 目录，
             完成后会自动合并所有 checkpoint 生成最终报告。
         """
+        # 设置输出目录，以便后续保存对话历史
+        self.output_dir = output_dir
+
         # 加载扫描结果
         scan_results = self.load_scan_results(scan_path, code_path)
 
@@ -552,7 +586,7 @@ class TraceAgent:
 
         # 合并所有 checkpoint 生成最终报告
         if output_dir:
-            self._merge_checkpoints_and_export(output_dir)
+            merge_checkpoints_and_export(output_dir, debug=self.debug)
 
     def audit_single(
         self,
@@ -569,84 +603,4 @@ class TraceAgent:
         """
         return self.audit_function(func_info)
 
-    def _merge_checkpoints_and_export(self, output_dir: str) -> List[TraceResult]:
-        """
-        合并所有 checkpoint 并导出最终报告
 
-        Args:
-            output_dir: 输出目录路径
-
-        Returns:
-            合并后的 TraceResult 列表
-        """
-        import glob
-        from utils.export_utils import export_results as export
-
-        checkpoint_dir = self._get_checkpoint_dir(output_dir)
-        checkpoint_files = sorted(glob.glob(str(checkpoint_dir / "*.json")))
-
-        if self.debug:
-            print(f"\n[合并] 找到 {len(checkpoint_files)} 个检查点文件", file=sys.stderr)
-
-        results = []
-        for checkpoint_file in checkpoint_files:
-            try:
-                with open(checkpoint_file, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                meta = data.pop("_checkpoint_meta", None)
-                if meta:
-                    result = TraceResult.model_validate(data)
-                    results.append(result)
-                    if self.debug:
-                        print(f"  [合并] {checkpoint_file}", file=sys.stderr)
-            except Exception as e:
-                if self.debug:
-                    print(f"  [警告] 合并检查点失败 ({checkpoint_file}): {e}", file=sys.stderr)
-
-        # 导出最终结果
-        if results:
-            # 按函数名排序
-            results.sort(key=lambda x: x.function_info.func_name)
-
-            # 时间戳用于文件名
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            output_filename = f"trace_results_{timestamp}"
-
-            # 导出 JSON
-            json_path = str(Path(output_dir) / f"{output_filename}.json")
-            export(results, json_path, "json")
-            if self.debug:
-                print(f"[导出] JSON: {json_path}", file=sys.stderr)
-
-            # 导出 HTML
-            html_path = str(Path(output_dir) / f"{output_filename}.html")
-            export(results, html_path, "html")
-            if self.debug:
-                print(f"[导出] HTML: {html_path}", file=sys.stderr)
-
-            print(f"\n[完成] 审计完成，共 {len(results)} 个函数")
-            print(f"输出文件: {output_filename}.json, {output_filename}.html")
-        else:
-            print("\n[警告] 没有找到任何审计结果")
-
-        return results
-
-    def export_results(
-        self,
-        results: List[TraceResult],
-        output_path: str,
-        format: str = "json",
-    ) -> str:
-        """
-        导出审计结果
-
-        Args:
-            results: TraceResult 列表
-            output_path: 输出路径
-            format: 输出格式 ("json" 或 "html")
-
-        Returns:
-            输出文件路径
-        """
-        from utils.export_utils import export_results as export
-        return export(results, output_path, format)

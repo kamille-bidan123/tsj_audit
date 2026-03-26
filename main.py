@@ -5,6 +5,7 @@ import sys
 import os
 from datetime import datetime
 from pathlib import Path
+import json
 
 # 添加项目根目录到路径
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -14,18 +15,6 @@ from tools.executor import ToolExecutor
 from config import Config
 
 
-def setup_docker(config):
-    """根据配置设置 Docker 模式"""
-    if config.enable_docker:
-        container_id = config.docker_container
-        if not container_id:
-            print("错误：--enable-docker 需要指定 --docker-container")
-            return False
-
-        print(f"[初始化] Docker 模式已启用：container={container_id}, workdir={config.docker_workdir}")
-    else:
-        print("[初始化] 本地模式已启用")
-    return True
 
 
 def load_saved_config(output_dir: str) -> Config | None:
@@ -118,9 +107,6 @@ def main():
         for key, value in dict(config).items():
             print(f"  {key}: {value}")
         print()
-
-    # 3. 设置 Docker 模式
-    setup_docker(config)
 
     # 4. 运行 TraceAgent
     run_trace_agent(config)

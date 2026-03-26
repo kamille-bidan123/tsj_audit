@@ -128,8 +128,22 @@ class FileTool:
             lines = content.split("\n")
             start_idx = (start - 1) if start else 0
             end_idx = end if end else len(lines)
-            lines = lines[start_idx:end_idx]
-            content = "\n".join(lines)
+            selected_lines = lines[start_idx:end_idx]
+
+            # 添加行号
+            numbered_lines = []
+            for i, line in enumerate(selected_lines, start=start_idx+1):
+                numbered_lines.append(f"{i}: {line}")
+
+            content = "\n".join(numbered_lines)
+        else:
+            # 如果没有指定行范围，也为所有行添加行号
+            lines = content.split("\n")
+            numbered_lines = []
+            for i, line in enumerate(lines, start=1):
+                numbered_lines.append(f"{i}: {line}")
+
+            content = "\n".join(numbered_lines)
 
         return content or "(文件为空)"
 
@@ -153,14 +167,16 @@ class FileTool:
         if not pattern:
             return "错误：缺少 pattern 参数"
 
-        full_path = self._resolve_path(search_path)
+        # full_path = self._resolve_path(search_path)
 
         # 优先尝试 rg (ripgrep)
         try:
             result = subprocess.run(
-                ["rg", "--ignore-case", "--color=never", pattern, full_path],
+                ["rg", "--ignore-case", "--color=never", "--line-number", pattern],
                 capture_output=True,
                 timeout=30,
+                close_fds=True,
+                cwd=self._get_config().get("project_path", ".")
             )
             # 手动解码，处理编码错误
             output = result.stdout.decode('utf-8', errors='replace').strip()
@@ -172,11 +188,13 @@ class FileTool:
         # 回退到 grep
         try:
             result = subprocess.run(
-                ["grep", "-ri", "--color=never", pattern, full_path],
+                ["grep", "-rni", "--color=never", pattern],
                 capture_output=True,
                 timeout=30,
+                close_fds=True,
+                cwd=self._get_config().get("project_path", ".")
             )
-            output = result.stdout.decode('utf-8', errors='replace').strip()
+            output = result.stdout.decode('utf-8', errors='replace')
             if output:
                 return output
         except subprocess.TimeoutExpired:

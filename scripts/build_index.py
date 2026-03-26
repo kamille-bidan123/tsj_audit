@@ -141,9 +141,14 @@ def build_index_with_progress(
     filelist_path = os.path.join(project_path, ".ctags-files")
 
     # 写入完整文件列表
-    abs_files = [os.path.join(project_path, f) for f in files]
+    # abs_files = [os.path.join(project_path, f) for f in files]
+    # with open(filelist_path, "w") as f:
+    #     f.write("\n".join(abs_files))
+
+    #写入文件列表
     with open(filelist_path, "w") as f:
-        f.write("\n".join(abs_files))
+        for filepath in files:
+            f.write(f"{filepath}\n")
 
     # 一次性构建
     cmd = [
@@ -154,7 +159,7 @@ def build_index_with_progress(
         "-f", tags_file,
         "-L", filelist_path,
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=300, cwd=project_path)
     if result.returncode != 0 and not os.path.exists(tags_file):
         print(f"ctags 失败：{result.stderr}", file=sys.stderr)
         return False
@@ -271,12 +276,15 @@ def main():
         print(f"错误：目录不存在：{args.project_path}", file=sys.stderr)
         sys.exit(1)
 
+    #   转换路径为绝对路径
+    project_path = os.path.abspath(args.project_path)
+
     # 清理或构建
     if args.clean:
-        clean_index(args.project_path)
+        clean_index(project_path)
     else:
         success = build_index_with_progress(
-            args.project_path,
+            project_path,
             verbose=args.verbose,
         )
         sys.exit(0 if success else 1)

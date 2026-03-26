@@ -9,12 +9,45 @@ PasswordResetAgent - Web 重置密码漏洞审计 Agent
 import sys
 import json
 from typing import List, Dict, Optional
+from pathlib import Path
+from datetime import datetime
 
 from tools.registry import ToolRegistry
 from tools.executor import ToolExecutor
 from models import CodeContext, AuditResult, FunctionInfo
 from utils.llm_client import LLMClient
 from cli import get_config_object
+
+
+class PasswordResetSubmitTool:
+    """提交密码重置审计结果的工具"""
+
+    name = "submit_password_reset"
+    description = "提交密码重置审计结果"
+
+    commands = {
+        "submit_password_reset": {
+            "description": "密码重置审计完成，提交审计结果",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "summary": {
+                        "type": "string",
+                        "description": "审计发现的总结",
+                    },
+                },
+                "required": ["summary"],
+            },
+        },
+    }
+
+    def execute(self, command: str, args: dict) -> str:
+        return "已提交密码重置审计结果"
+
+
+# 注册 submit_password_reset 工具
+ToolRegistry._commands["submit_password_reset"] = PasswordResetSubmitTool
+ToolRegistry._tools["submit_password_reset"] = PasswordResetSubmitTool
 
 
 class PasswordResetAgent:
@@ -28,7 +61,7 @@ class PasswordResetAgent:
         "read_file", "list_dir", "search_code",
         "go_to_def", "find_refs",
         "skill",  # Skills 工具
-        "submit",
+        "submit_password_reset",
     ]
 
     # 密码重置相关关键词
@@ -64,11 +97,13 @@ class PasswordResetAgent:
         code_map: List[CodeContext],
         project_path: str = ".",
         debug: bool = False,
+        output_dir: str = None,
     ):
         self.function_info = function_info
         self.code_map = code_map
         self.project_path = project_path
         self.debug = debug
+        self.output_dir = output_dir
 
         self._llm_client = None
         self._tools_schema: Optional[List[Dict]] = None
@@ -128,13 +163,13 @@ class PasswordResetAgent:
 工具的详细说明（包括参数和使用场景）已在工具 schema 中定义，请参考工具描述。
 
 ## 输出格式
-当你认为已经审计完成时，调用 submit 工具提交审计结果。
+当你认为已经审计完成时，调用 submit_password_reset 工具提交审计结果。
 
 强制要求：
+你应该只关注上面提供的接口函数相关的数据流和代码流和代码路径，不要偏离主题去分析其他无关的代码。
 你应该只关注上面提供的接口函数相关的数据流和代码路径，不要偏离主题去分析其他无关的代码。
 你应该只关注上面提供的接口函数相关的数据流和代码路径，不要偏离主题去分析其他无关的代码。
-你应该只关注上面提供的接口函数相关的数据流和代码路径，不要偏离主题去分析其他无关的代码。
-"""
+重要的事情说三遍"""
 
     def _build_user_message(self) -> str:
         """构建用户消息，包含 codemap"""
@@ -151,8 +186,35 @@ class PasswordResetAgent:
 ```
 
 请使用工具调用来深入分析代码，确认密码重置接口是否需要提供旧密码。
-当你认为已经审计完成时，调用 submit 工具提交审计结果。
-"""
+当你认为已经审计完成时，调用 submit_password_reset 工具提交审计结果。"""
+
+    def _save_conversation_history(self, messages: List[Dict]):
+        """保存该 agent 的对话历史"""
+        if not self.output_dir:
+            return  # 如果没有设置输出目录，则不保存
+
+        # 构建输出目录结构：output_dir/conversations/agent_name/function_name.json
+        conversations_dir = Path(self.output_dir) / "conversations" / "password_reset_agent"
+        conversations_dir.mkdir(parents=True, exist_ok=True)
+
+        # 清理函数名中的非法字符
+        safe_func_name = "".join(c if c.isalnum() or c in ("_", "-") else "_" for c in self.function_info.func_name)
+
+        conversation_file = conversations_dir / f"{safe_func_name}.json"
+
+        # 准备保存对话历史
+        conversation_data = {
+            "function_info": self.function_info.model_dump(),
+            "conversation_history": messages,
+            "saved_at": datetime.now().isoformat(),
+            "agent": "password_reset_agent"
+        }
+
+        with open(conversation_file, "w", encoding="utf-8") as f:
+            json.dump(conversation_data, f, indent=2, ensure_ascii=False)
+
+        if self.debug:
+            print(f"  [对话历史] password_reset_agent 已保存: {conversation_file}", file=sys.stderr)
 
     def audit(self) -> AuditResult:
         """
@@ -192,9 +254,11 @@ class PasswordResetAgent:
                     func_name = tc["function"]["name"]
                     arguments = tc["function"]["arguments"]
 
-                    # 检查是否是 submit 调用
-                    if func_name == "submit":
+                    # 检查是否是 submit_password_reset 调用
+                    if func_name == "submit_password_reset":
                         print("[提交审计结果]", file=sys.stderr)
+                        # 保存对话历史
+                        self._save_conversation_history(messages)
                         return self._parse_audit_result(arguments, messages)
 
                     # 执行工具
@@ -225,10 +289,11 @@ class PasswordResetAgent:
                     print("[提示] 请使用工具进行审计，或调用 submit 结束", file=sys.stderr)
                 messages.append({
                     "role": "user",
-                    "content": "请使用工具进行审计，或调用 submit 工具结束审计。"
+                    "content": "请使用工具进行审计，或调用 submit_password_reset 工具结束审计。"
                 })
 
-        # 达到最大轮数，返回空结果
+        # 达到最大轮数，返回空结果，但仍保存对话历史
+        self._save_conversation_history(messages)
         return AuditResult(
             vulnerability_type="password_reset",
             is_vulnerable=False,

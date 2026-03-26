@@ -42,3 +42,6 @@ logs/
 .cache/
 temp/
 tmp/
+
+# output
+audit_output/

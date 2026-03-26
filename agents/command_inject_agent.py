@@ -11,12 +11,44 @@ import sys
 import json
 from typing import List, Dict, Optional
 from pathlib import Path
+from datetime import datetime
 
 from tools.registry import ToolRegistry
 from tools.executor import ToolExecutor
 from models import CodeContext, AuditResult, FunctionInfo
 from utils.llm_client import LLMClient
 from cli import get_config_object
+
+
+class CommandInjectSubmitTool:
+    """提交命令注入审计结果的工具"""
+
+    name = "submit_command_inject"
+    description = "提交命令注入审计结果"
+
+    commands = {
+        "submit_command_inject": {
+            "description": "命令注入审计完成，提交审计结果",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "summary": {
+                        "type": "string",
+                        "description": "审计发现的总结",
+                    },
+                },
+                "required": ["summary"],
+            },
+        },
+    }
+
+    def execute(self, command: str, args: dict) -> str:
+        return "已提交命令注入审计结果"
+
+
+# 注册 submit_command_inject 工具
+ToolRegistry._commands["submit_command_inject"] = CommandInjectSubmitTool
+ToolRegistry._tools["submit_command_inject"] = CommandInjectSubmitTool
 
 
 class CommandInjectAgent:
@@ -30,7 +62,7 @@ class CommandInjectAgent:
         "read_file", "list_dir", "search_code",
         "go_to_def", "find_refs",
         "skill",  # Skills 工具
-        "submit",
+        "submit_command_inject",
     ]
 
     # 危险函数列表
@@ -45,11 +77,13 @@ class CommandInjectAgent:
         code_map: List[CodeContext],
         project_path: str = ".",
         debug: bool = False,
+        output_dir: str = None,
     ):
         self.function_info = function_info
         self.code_map = code_map
         self.project_path = project_path
         self.debug = debug
+        self.output_dir = output_dir
 
         self._llm_client = None
         self._tools_schema: Optional[List[Dict]] = None
@@ -99,7 +133,7 @@ class CommandInjectAgent:
 工具的详细说明（包括参数和使用场景）已在工具 schema 中定义，请参考工具描述。
 
 ## 输出格式
-当你认为已经审计完成时，调用 submit 工具提交审计结果。
+当你认为已经审计完成时，调用 submit_command_inject 工具提交审计结果。
 
 强制要求：
 你应该只关注上面提供的接口函数相关的数据流和代码路径，不要偏离主题去分析其他无关的代码。
@@ -123,7 +157,7 @@ class CommandInjectAgent:
 ```
 
 请使用工具调用来深入分析代码，确认是否存在命令注入漏洞。
-当你认为已经审计完成时，调用 submit 工具提交审计结果。
+当你认为已经审计完成时，调用 submit_command_inject 工具提交审计结果。
 """
 
     def audit(self) -> AuditResult:
@@ -163,9 +197,11 @@ class CommandInjectAgent:
                     func_name = tc["function"]["name"]
                     arguments = tc["function"]["arguments"]
 
-                    # 检查是否是 submit 调用
-                    if func_name == "submit":
+                    # 检查是否是 submit_command_inject 调用
+                    if func_name == "submit_command_inject":
                         print("[提交审计结果]", file=sys.stderr)
+                        # 保存对话历史
+                        self._save_conversation_history(messages)
                         # 解析审计结果
                         return self._parse_audit_result(arguments, messages)
 
@@ -194,10 +230,10 @@ class CommandInjectAgent:
             else:
                 # 没有工具调用，提示 LLM 使用工具
                 if self.debug:
-                    print("[提示] 请使用工具进行审计，或调用 submit 结束", file=sys.stderr)
+                    print("[提示] 请使用工具进行审计，或调用 submit_command_inject 结束", file=sys.stderr)
                 messages.append({
                     "role": "user",
-                    "content": "请使用工具进行审计，或调用 submit 工具结束审计。"
+                    "content": "请使用工具进行审计，或调用 submit_command_inject 工具结束审计。"
                 })
 
         # 达到最大轮数，返回空结果
@@ -251,3 +287,32 @@ class CommandInjectAgent:
             recommendation=data.get("recommendation"),
             code_map=self.code_map,
         )
+
+    def _save_conversation_history(self, messages: List[Dict]):
+        """保存该 agent 的对话历史"""
+        if not self.output_dir:
+            return  # 如果没有设置输出目录，则不保存
+
+        # 构建输出目录结构：output_dir/conversations/agent_name/function_name.json
+        conversations_dir = Path(self.output_dir) / "conversations" / "command_inject_agent"
+        conversations_dir.mkdir(parents=True, exist_ok=True)
+
+        # 清理函数名中的非法字符
+        safe_func_name = "".join(c if c.isalnum() or c in ("_", "-") else "_" for c in self.function_info.func_name)
+
+        conversation_file = conversations_dir / f"{safe_func_name}.json"
+
+        # 准备保存对话历史
+        conversation_data = {
+            "function_info": self.function_info.model_dump(),
+            "conversation_history": messages,
+            "saved_at": datetime.now().isoformat(),
+            "agent": "command_inject_agent"
+        }
+
+        with open(conversation_file, "w", encoding="utf-8") as f:
+            json.dump(conversation_data, f, indent=2, ensure_ascii=False)
+
+        if self.debug:
+            print(f"  [对话历史] command_inject_agent 已保存: {conversation_file}", file=sys.stderr)
+

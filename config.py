@@ -22,8 +22,7 @@ class Config(BaseSettings):
 
     配置字段说明:
     - API 配置：base_url, api_key, model_name
-    - 功能开关：enable_docker, enable_lsp, debug
-    - Docker 配置：docker_container, docker_workdir
+    - 功能开关：enable_lsp, debug
     - 项目配置：project_path, scan, max_turns, output_dir
     """
 
@@ -42,13 +41,13 @@ class Config(BaseSettings):
     )
 
     # 功能开关
-    enable_docker: bool = Field(
-        default=False,
-        description="启用 Docker 模式"
-    )
     enable_lsp: bool = Field(
         default=False,
         description="启用 LSP 语言服务器"
+    )
+    disable_exploit: bool = Field(
+        default=False,
+        description="禁用 ExploitAgent"
     )
     debug: bool = Field(
         default=False,
@@ -59,16 +58,6 @@ class Config(BaseSettings):
     resume: bool = Field(
         default=False,
         description="从输出目录的中间信息恢复审计"
-    )
-
-    # Docker 配置
-    docker_container: str | None = Field(
-        default=None,
-        description="Docker 容器 ID"
-    )
-    docker_workdir: str = Field(
-        default="/app",
-        description="容器内工作目录"
     )
 
     # 项目配置

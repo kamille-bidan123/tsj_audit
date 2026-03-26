@@ -25,9 +25,6 @@ def parse_args() -> argparse.Namespace:
   # 基本使用
   python main.py --api-key sk-xxx
 
-  # 使用本地 Docker 容器
-  python main.py --api-key sk-xxx --enable-docker --docker-container my_container
-
   # 调试模式
   python main.py --api-key sk-xxx --debug
 
@@ -70,17 +67,17 @@ def parse_args() -> argparse.Namespace:
     feature_group = parser.add_argument_group("功能开关")
 
     feature_group.add_argument(
-        "--enable-docker",
-        action="store_true",
-        default=None,
-        help="启用 Docker 模式（代码在容器内执行）",
-    )
-
-    feature_group.add_argument(
         "--enable-lsp",
         action="store_true",
         default=None,
         help="启用 LSP 语言服务器支持",
+    )
+
+    feature_group.add_argument(
+        "--disable-exploit",
+        action="store_true",
+        default=None,
+        help="禁用 ExploitAgent（不生成 PoC）",
     )
 
     feature_group.add_argument(
@@ -102,23 +99,6 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default=None,
         help="指定起始扫描脚本",
-    )
-
-    # ========== Docker 配置 ==========
-    docker_group = parser.add_argument_group("Docker 配置（仅在 --enable-docker 时有效）")
-
-    docker_group.add_argument(
-        "--docker-container",
-        type=str,
-        default=None,
-        help="Docker 容器 ID 或名称",
-    )
-
-    docker_group.add_argument(
-        "--docker-workdir",
-        type=str,
-        default=None,
-        help="容器内工作目录",
     )
 
     # ========== 项目配置 ==========

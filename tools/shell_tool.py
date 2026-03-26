@@ -4,7 +4,6 @@
 Shell 命令执行工具
 
 支持多 session 管理，每个 session 维护独立的工作目录。
-支持本地模式和 Docker 模式。
 配置从 cli 全局配置读取。
 """
 
@@ -38,19 +37,12 @@ class SessionInfo:
         session_id: str,
         process: subprocess.Popen = None,
         master_fd: int = None,
-        container_id: str = None,
-        docker_process: subprocess.Popen = None,
-        docker_master_fd: int = None,
     ):
         self.session_id = session_id
         self.process = process  # 本地模式的 bash 进程
         self.master_fd = master_fd  # 本地模式的 pty fd
-        self.container_id = container_id  # Docker 模式的容器 ID
-        self.docker_process = docker_process  # Docker 模式的 docker exec 进程
-        self.docker_master_fd = docker_master_fd  # Docker 模式的 pty fd
         self.cwd: str = "."  # 当前工作目录
         self.created_at: float = time.time()
-        self.is_docker: bool = container_id is not None
 
     def get_cwd(self) -> str:
         """获取 session 当前工作目录"""
@@ -59,7 +51,7 @@ class SessionInfo:
 
 @ToolRegistry.register
 class ShellTool:
-    """Shell 命令执行，支持多 session（本地模式和 Docker 模式）"""
+    """Shell 命令执行，支持多 session"""
 
     name = "shell_tool"
     description = "执行系统命令和脚本，支持多 session 管理"
@@ -160,54 +152,31 @@ class ShellTool:
             return "错误：缺少 command 参数"
 
         config = self._get_config()
-        container_id = config.get("docker_container") or config.get("container_id")
         project_path = config.get("project_path", ".")
 
-        if container_id:
-            # Docker 模式
-            shell_cmd = f"docker exec {container_id} bash -c '{cmd}'"
-            try:
-                result = subprocess.run(
-                    shell_cmd,
-                    shell=True,
-                    capture_output=True,
-                    timeout=30,
-                )
-                output = result.stdout.decode('utf-8', errors='replace')
-                stderr = result.stderr.decode('utf-8', errors='replace')
-                if stderr:
-                    output += "\n" + stderr
-                return output.strip() or "(无输出)"
-            except subprocess.TimeoutExpired:
-                return "错误：命令执行超时"
-            except Exception as e:
-                return f"错误：{e}"
-        else:
-            # 本地模式
-            try:
-                result = subprocess.run(
-                    cmd,
-                    shell=True,
-                    capture_output=True,
-                    timeout=30,
-                    cwd=project_path,
-                )
-                output = result.stdout.decode('utf-8', errors='replace')
-                stderr = result.stderr.decode('utf-8', errors='replace')
-                if stderr:
-                    output += "\n" + stderr
-                return output.strip() or "(无输出)"
-            except subprocess.TimeoutExpired:
-                return "错误：命令执行超时"
-            except Exception as e:
-                return f"错误：{e}"
+        # 本地模式
+        try:
+            result = subprocess.run(
+                cmd,
+                shell=True,
+                capture_output=True,
+                timeout=30,
+                cwd=project_path,
+            )
+            output = result.stdout.decode('utf-8', errors='replace')
+            stderr = result.stderr.decode('utf-8', errors='replace')
+            if stderr:
+                output += "\n" + stderr
+            return output.strip() or "(无输出)"
+        except subprocess.TimeoutExpired:
+            return "错误：命令执行超时"
+        except Exception as e:
+            return f"错误：{e}"
 
     def _create_session(self, args: dict) -> str:
         """创建新的 shell session"""
         self._register_cleanup()
         config = self._get_config()
-        container_id = config.get("docker_container") or config.get("container_id")
-        workdir = config.get("docker_workdir", "/app")
         project_path = config.get("project_path", ".")
 
         session_id = args.get("name") or str(uuid.uuid4())[:8]
@@ -216,81 +185,41 @@ class ShellTool:
         if session_id in self._sessions:
             return f"错误：session '{session_id}' 已存在"
 
-        if container_id:
-            # Docker 模式：使用 docker exec -it 创建交互式 bash
+        # 本地模式：使用 pty 创建交互式 bash
+        try:
+            master_fd, slave_fd = pty.openpty()
+
+            process = subprocess.Popen(
+                ["bash", "--norc", "--noprofile", "-i"],
+                stdin=slave_fd,
+                stdout=slave_fd,
+                stderr=slave_fd,
+                close_fds=True,
+                cwd=project_path,
+            )
+
+            os.close(slave_fd)
+
+            flags = fcntl.fcntl(master_fd, fcntl.F_GETFL)
+            fcntl.fcntl(master_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+
+            self._sessions[session_id] = SessionInfo(
+                session_id=session_id,
+                process=process,
+                master_fd=master_fd,
+            )
+            self._sessions[session_id].cwd = project_path
+
+            # 清空初始输出
+            time.sleep(0.2)
             try:
-                master_fd, slave_fd = pty.openpty()
+                os.read(master_fd, 4096)
+            except BlockingIOError:
+                pass
 
-                process = subprocess.Popen(
-                    ["docker", "exec", "-it", container_id, "bash", "--norc", "--noprofile", "-i"],
-                    stdin=slave_fd,
-                    stdout=slave_fd,
-                    stderr=slave_fd,
-                    close_fds=True,
-                )
-
-                os.close(slave_fd)
-
-                # 设置为非阻塞模式
-                flags = fcntl.fcntl(master_fd, fcntl.F_GETFL)
-                fcntl.fcntl(master_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
-
-                self._sessions[session_id] = SessionInfo(
-                    session_id=session_id,
-                    docker_process=process,
-                    docker_master_fd=master_fd,
-                    container_id=container_id,
-                )
-                self._sessions[session_id].cwd = workdir
-                self._sessions[session_id].is_docker = True
-
-                # 清空初始输出（bash banner 等）
-                time.sleep(0.3)
-                try:
-                    os.read(master_fd, 4096)
-                except BlockingIOError:
-                    pass
-
-                return f"已创建 session: {session_id} (Docker: {container_id}, cwd: {workdir})"
-            except Exception as e:
-                return f"错误：创建 session 失败 - {e}"
-        else:
-            # 本地模式：使用 pty 创建交互式 bash
-            try:
-                master_fd, slave_fd = pty.openpty()
-
-                process = subprocess.Popen(
-                    ["bash", "--norc", "--noprofile", "-i"],
-                    stdin=slave_fd,
-                    stdout=slave_fd,
-                    stderr=slave_fd,
-                    close_fds=True,
-                    cwd=project_path,
-                )
-
-                os.close(slave_fd)
-
-                flags = fcntl.fcntl(master_fd, fcntl.F_GETFL)
-                fcntl.fcntl(master_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
-
-                self._sessions[session_id] = SessionInfo(
-                    session_id=session_id,
-                    process=process,
-                    master_fd=master_fd,
-                )
-                self._sessions[session_id].cwd = project_path
-                self._sessions[session_id].is_docker = False
-
-                # 清空初始输出
-                time.sleep(0.2)
-                try:
-                    os.read(master_fd, 4096)
-                except BlockingIOError:
-                    pass
-
-                return f"已创建 session: {session_id} (当前目录：{project_path})"
-            except Exception as e:
-                return f"错误：创建 session 失败 - {e}"
+            return f"已创建 session: {session_id} (当前目录：{project_path})"
+        except Exception as e:
+            return f"错误：创建 session 失败 - {e}"
 
     def _session_exec(self, args: dict) -> str:
         """在指定 session 中执行命令"""
@@ -306,18 +235,14 @@ class ShellTool:
         session = self._sessions[session_id]
 
         # 检查 session 是否可用
-        if session.is_docker:
-            if session.docker_process and session.docker_process.poll() is not None:
-                return f"错误：session '{session_id}' 已终止"
-        else:
-            if session.process and session.process.poll() is not None:
-                return f"错误：session '{session_id}' 已终止"
+        if session.process and session.process.poll() is not None:
+            return f"错误：session '{session_id}' 已终止"
 
         return self._pty_session_exec(session, command)
 
     def _pty_session_exec(self, session: SessionInfo, command: str) -> str:
-        """通过 pty 在 session 中执行命令（本地和 Docker 通用）"""
-        master_fd = session.master_fd or session.docker_master_fd
+        """通过 pty 在 session 中执行命令（本地模式）"""
+        master_fd = session.master_fd
         if master_fd is None:
             return f"错误：session '{session.session_id}' 没有有效的 pty"
 
@@ -407,7 +332,7 @@ class ShellTool:
         session = self._sessions[session_id]
 
         try:
-            master_fd = session.master_fd or session.docker_master_fd
+            master_fd = session.master_fd
 
             if master_fd is not None:
                 try:
@@ -417,7 +342,7 @@ class ShellTool:
                     pass
 
             # 终止进程
-            process = session.docker_process if session.is_docker else session.process
+            process = session.process
             if process and process.poll() is None:
                 process.terminate()
                 try:
@@ -444,16 +369,10 @@ class ShellTool:
 
         lines = []
         for session_id, session in self._sessions.items():
-            if session.is_docker:
-                if session.docker_process and session.docker_process.poll() is not None:
-                    lines.append(f"  {session_id} [已结束] Docker: {session.container_id} cwd: {session.cwd}")
-                else:
-                    lines.append(f"  {session_id} [活跃] Docker: {session.container_id} cwd: {session.cwd}")
+            if session.process and session.process.poll() is not None:
+                lines.append(f"  {session_id} [已结束] cwd: {session.cwd}")
             else:
-                if session.process and session.process.poll() is not None:
-                    lines.append(f"  {session_id} [已结束] cwd: {session.cwd}")
-                else:
-                    lines.append(f"  {session_id} [活跃] cwd: {session.cwd}")
+                lines.append(f"  {session_id} [活跃] cwd: {session.cwd}")
 
         return "活跃 session 列表:\n" + "\n".join(lines)
 
@@ -479,7 +398,7 @@ class ShellTool:
         for session_id in session_ids:
             try:
                 session = cls._sessions[session_id]
-                master_fd = session.master_fd or session.docker_master_fd
+                master_fd = session.master_fd
 
                 if master_fd is not None:
                     try:
@@ -487,7 +406,7 @@ class ShellTool:
                     except OSError:
                         pass
 
-                process = session.docker_process if session.is_docker else session.process
+                process = session.process
                 if process and process.poll() is None:
                     process.terminate()
                     try:

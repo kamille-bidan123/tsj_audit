@@ -61,19 +61,15 @@ class FileTool(Tool):
     def initialize(self):
         # 从 ToolExecutor 获取配置
         config = ToolExecutor.get_config()
-        self.container_id = config.get("container_id")
-        self.workdir = config.get("workdir", "/app")
+        self.workdir = config.get("workdir", "./")
 ```
 
 ### 重新初始化
 
-如果需要重新初始化（如切换 Docker 容器），调用：
+如果需要重新初始化，调用：
 
 ```python
-# 切换 Docker 模式会自动重置所有工具单例
-ToolExecutor.set_docker_mode("new_container_id")
-
-# 或者手动重置
+# 手动重置
 from tools.file_tool import FileTool
 FileTool.reset_instance()
 
@@ -81,51 +77,14 @@ FileTool.reset_instance()
 ToolExecutor.call("read_file test.txt")
 ```
 
-## Docker 透明模式
-
-### 本地模式（默认）
+## 本地模式（默认）
 
 ```python
-ToolExecutor.set_local_mode()
-
 # LLM 命令
 {"command": "read_file src/main.c:1-10"}
 
-# 直接读取宿主机文件
+# 直接读取本地文件
 cat src/main.c | head -n 10
-```
-
-### Docker 模式（透明路由）
-
-```python
-ToolExecutor.set_docker_mode(
-    container_id="my_container",
-    workdir="/app/code",
-)
-
-# LLM 命令（完全一样！）
-{"command": "read_file src/main.c:1-10"}
-
-# 自动路由到容器
-docker exec my_container cat /app/code/src/main.c | head -n 10
-```
-
-### Agent 集成
-
-```python
-from tools.executor import ToolExecutor
-from agents.code_audit_agent import CodeAuditAgent
-
-# 启动时连接容器
-container_id = start_or_get_container()
-ToolExecutor.set_docker_mode(container_id)
-
-# 创建 Agent
-agent = CodeAuditAgent()
-
-# LLM 调用工具，完全无感
-response = {"command": "read_file src/main.c:1-10", "logic": "..."}
-result = agent.handle_llm_response(response)
 ```
 
 ## 添加新工具

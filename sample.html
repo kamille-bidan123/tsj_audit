@@ -1,0 +1,1792 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>代码安全审计报告</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background: #e9ecef;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        h1 {
+            text-align: center;
+            color: #1a1a2e;
+            margin-bottom: 30px;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            color: #fff;
+        }
+        .entry-item {
+            background: #fff;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+            overflow: hidden;
+            border: 1px solid #dee2e6;
+        }
+        .entry-header {
+            padding: 15px 20px;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            transition: background-color 0.2s;
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+            border-bottom: 2px solid #dee2e6;
+        }
+        .entry-header:hover {
+            background: linear-gradient(135deg, #e9ecef 0%, #dee2e6 100%);
+        }
+        .entry-title {
+            font-size: 18px;
+            font-weight: 700;
+            color: #495057;
+        }
+        .entry-meta {
+            font-size: 13px;
+            color: #6c757d;
+            margin-top: 5px;
+        }
+        .toggle-icon {
+            font-size: 20px;
+            color: #6c757d;
+            transition: transform 0.3s;
+            background: #dee2e6;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .entry-item.expanded .toggle-icon {
+            transform: rotate(90deg);
+            background: #495057;
+            color: #fff;
+        }
+        .entry-content {
+            display: none;
+            padding: 20px;
+            border-top: 3px solid #667eea;
+            background: #f8f9fa;
+        }
+        .entry-item.expanded .entry-content {
+            display: block;
+        }
+        .section {
+            margin-bottom: 20px;
+            padding: 15px;
+            background: #fff;
+            border-radius: 6px;
+            border: 1px solid #dee2e6;
+        }
+        .section-title {
+            font-size: 16px;
+            font-weight: 700;
+            color: #495057;
+            margin-bottom: 10px;
+            padding-bottom: 8px;
+            border-bottom: 3px solid #667eea;
+        }
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        .info-item {
+            background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
+            padding: 12px;
+            border-radius: 6px;
+            border: 1px solid #90caf9;
+        }
+        .info-label {
+            font-size: 12px;
+            color: #7f8c8d;
+            text-transform: uppercase;
+        }
+        .info-value {
+            font-size: 14px;
+            color: #2c3e50;
+            word-break: break-all;
+        }
+        .code-block {
+            background: #282c34;
+            color: #abb2bf;
+            padding: 15px;
+            border-radius: 4px;
+            overflow-x: auto;
+            font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
+            font-size: 13px;
+            line-height: 1.5;
+            margin: 10px 0;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        .tag {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 3px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .tag-danger {
+            background: #fee2e2;
+            color: #dc2626;
+        }
+        .tag-warning {
+            background: #fef3c7;
+            color: #d97706;
+        }
+        .tag-success {
+            background: #d1fae5;
+            color: #059669;
+        }
+        .tag-info {
+            background: #dbeafe;
+            color: #2563eb;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 10px 0;
+        }
+        th, td {
+            padding: 10px;
+            text-align: left;
+            border-bottom: 1px solid #eee;
+        }
+        th {
+            background: #f8f9fa;
+            font-weight: 600;
+            color: #34495e;
+        }
+        tr:hover {
+            background: #f8f9fa;
+        }
+        .nested-item {
+            background: linear-gradient(135deg, #fff9e6 0%, #fff3cd 100%);
+            border: 1px solid #ffc107;
+            border-radius: 6px;
+            padding: 15px;
+            margin: 10px 0;
+        }
+        .nested-title {
+            font-weight: 700;
+            color: #856404;
+            margin-bottom: 10px;
+        }
+        details {
+            margin: 10px 0;
+        }
+        summary {
+            cursor: pointer;
+            padding: 12px 15px;
+            background: linear-gradient(135deg, #e9ecef 0%, #dee2e6 100%);
+            border-radius: 6px;
+            list-style: none;
+            font-weight: 600;
+            color: #495057;
+            border: 1px solid #ced4da;
+        }
+        summary:hover {
+            background: linear-gradient(135deg, #dee2e6 0%, #ced4da 100%);
+        }
+        summary::-webkit-details-marker {
+            display: none;
+        }
+        summary::before {
+            content: '▶ ';
+            display: inline-block;
+            transition: transform 0.2s;
+            color: #667eea;
+        }
+        details[open] summary::before {
+            transform: rotate(90deg);
+        }
+        details[open] summary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #fff;
+            border-color: #667eea;
+        }
+        details[open] summary::before {
+            color: #fff;
+        }
+        .empty-state {
+            text-align: center;
+            color: #adb5bd;
+            padding: 40px;
+            font-size: 16px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>代码安全审计报告</h1>
+
+        <div class="entry-item" id="entry-1">
+            <div class="entry-header" onclick="toggleEntry(this)">
+                <div>
+                    <div class="entry-title">#1 handle_search</div>
+                    <div class="entry-meta">
+                        main.c |
+                        行 37-56 |
+                        c / civetweb
+                    </div>
+                </div>
+                <span class="toggle-icon">▶</span>
+            </div>
+            <div class="entry-content">
+
+                <div class="section">
+                    <div class="section-title">函数信息</div>
+                    <div class="info-grid">
+                        <div class="info-item">
+                            <div class="info-label">函数名</div>
+                            <div class="info-value">handle_search</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="info-label">文件路径</div>
+                            <div class="info-value">main.c</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="info-label">行号范围</div>
+                            <div class="info-value">37 - 56</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="info-label">项目类型</div>
+                            <div class="info-value">c</div>
+                        </div>
+                    </div>
+                    <details>
+                        <summary>查看代码片段</summary>
+                        <div class="code-block">37: static int handle_search(struct mg_connection *conn, void *cbdata)
+38: {
+39:     char query[256];
+40:     char sql[512];
+41:     char query_buf[1024];
+42: 
+43:     // 获取用户输入
+44:     if (get_var(conn, &quot;q&quot;, query_buf, sizeof(query_buf)) == NULL) {
+45:         mg_printf(conn, &quot;HTTP/1.0 400 Bad Request\r\n\r\nMissing parameter &#39;q&#39;&quot;);
+46:         return 400;
+47:     }
+48: 
+49:     strncpy(query, query_buf, sizeof(query) - 1);
+50:     query[sizeof(query) - 1] = &#39;\0&#39;;
+51: 
+52:     // 危险：直接拼接用户输入到 SQL 语句
+53:     sprintf(sql, &quot;SELECT * FROM products WHERE name LIKE &#39;%%%s%%&#39;&quot;, query);
+54: 
+55:     // 模拟执行 SQL
+56:     printf(&quot;Executing SQL: %s\n&quot;, sql);
+    // ... (truncated)</div>
+                    </details>
+                </div>
+
+                <div class="section">
+                    <div class="section-title">代码映射 (Code Map)</div>
+                    <p>共 2 个相关函数</p>
+
+                    <details>
+                        <summary>
+                            <strong>handle_search</strong>
+                            <span class="tag tag-info">main.c:37-56</span>
+                        </summary>
+                        <div class="nested-item">
+                            <div class="info-grid">
+                                <div class="info-item">
+                                    <div class="info-label">入口函数</div>
+                                    <div class="info-value">是</div>
+                                </div>
+                                <div class="info-item">
+                                    <div class="info-label">污染源</div>
+                                    <div class="info-value">get_var(conn, "q", query_buf, sizeof(query_buf))</div>
+                                </div>
+                                <div class="info-item">
+                                    <div class="info-label">污染路径</div>
+                                    <div class="info-value">query_buf -> query -> sql (SQL注入)</div>
+                                </div>
+                            </div>
+                            <details>
+                                <summary>查看代码</summary>
+                                <div class="code-block">static int handle_search(struct mg_connection *conn, void *cbdata)
+{
+    char query[256];
+    char sql[512];
+    char query_buf[1024];
+
+    // 获取用户输入
+    if (get_var(conn, &quot;q&quot;, query_buf, sizeof(query_buf)) == NULL) {
+        mg_printf(conn, &quot;HTTP/1.0 400 Bad Request\r\n\r\nMissing parameter &#39;q&#39;&quot;);
+        return 400;
+    }
+
+    strncpy(query, query_buf, sizeof(query) - 1);
+    query[sizeof(query) - 1] = &#39;\0&#39;;
+
+    // 危险：直接拼接用户输入到 SQL 语句
+    sprintf(sql, &quot;SELECT * FROM products WHERE name LIKE &#39;%%%s%%&#39;&quot;, query);
+
+    // 模拟执行 SQL
+    printf(&quot;Executing SQL: %s\n&quot;, sql);</div>
+                            </details>
+                        </div>
+                    </details>
+
+                    <details>
+                        <summary>
+                            <strong>get_var</strong>
+                            <span class="tag tag-info">main.c:19-35</span>
+                        </summary>
+                        <div class="nested-item">
+                            <div class="info-grid">
+                                <div class="info-item">
+                                    <div class="info-label">入口函数</div>
+                                    <div class="info-value">否</div>
+                                </div>
+                                <div class="info-item">
+                                    <div class="info-label">污染源</div>
+                                    <div class="info-value">mg_get_var(query_string, strlen(query_string), name, buf, buf_size)</div>
+                                </div>
+                                <div class="info-item">
+                                    <div class="info-label">污染路径</div>
+                                    <div class="info-value">外部HTTP查询参数 -> buf -> 调用者</div>
+                                </div>
+                            </div>
+                            <details>
+                                <summary>查看代码</summary>
+                                <div class="code-block">static const char *get_var(struct mg_connection *conn, const char *name, char *buf, size_t buf_size)
+{
+    struct mg_request_info *ri = mg_get_request_info(conn);
+    const char *query_string = ri-&gt;query_string;
+
+    if (query_string == NULL) {
+        return NULL;
+    }
+
+    // 使用 mg_get_var 从查询字符串中提取变量
+    int len = mg_get_var(query_string, strlen(query_string), name, buf, buf_size);
+    if (len &gt; 0) {
+        return buf;
+    }
+    return NULL;
+}</div>
+                            </details>
+                        </div>
+                    </details>
+
+                </div>
+
+                <div class="section">
+                    <div class="section-title">漏洞审计结果</div>
+
+                    <details>
+                        <summary>
+                            <span class="tag tag-success">未发现问题</span>
+                            <strong>command_injection</strong>
+                            <span class="tag tag-danger">置信度：高</span>
+                        </summary>
+                        <div class="nested-item">
+                            <div class="info-grid">
+                                <div class="info-item">
+                                    <div class="info-label">漏洞类型</div>
+                                    <div class="info-value">command_injection</div>
+                                </div>
+                                <div class="info-item">
+                                    <div class="info-label">是否存漏洞</div>
+                                    <div class="info-value">未发现问题</div>
+                                </div>
+                                <div class="info-item">
+                                    <div class="info-label">置信度</div>
+                                    <div class="info-value">高</div>
+                                </div>
+                            </div>
+                            <p><strong>描述:</strong></p>
+                            <p>在handle_search函数中未发现命令注入漏洞。该函数虽然存在SQL注入漏洞（直接拼接用户输入到SQL语句），但只使用了printf函数输出SQL语句到控制台，没有调用任何命令执行相关的危险函数。</p>
+
+                            <p><strong>污点流向:</strong></p>
+                            <div class="code-block">外部HTTP查询参数q -&gt; query_buf -&gt; query -&gt; sql -&gt; printf输出到控制台。数据流终止于printf，没有流向system、popen、exec等命令执行函数。</div>
+
+                            <p><strong>修复建议:</strong></p>
+                            <div class="code-block">虽然当前没有命令注入风险，但建议：1) 修复SQL注入漏洞，使用参数化查询；2) 如果后续需要执行SQL，应使用安全的数据库API而非系统命令；3) 对所有用户输入进行严格的验证和过滤。</div>
+
+                            <details>
+                                <summary>相关代码上下文</summary>
+
+                                <div class="nested-item">
+                                    <div class="nested-title">handle_search @ main.c:37-56</div>
+                                    <div class="code-block">static int handle_search(struct mg_connection *conn, void *cbdata)
+{
+    char query[256];
+    char sql[512];
+    char query_buf[1024];
+
+    // 获取用户输入
+    if (get_var(conn, &quot;q&quot;, query_buf, sizeof(query_buf)) == NULL) {
+        mg_printf(conn, &quot;HTTP/1.0 400 Bad Request\r\n\r\nMissing parameter &#39;q&#39;&quot;);
+        return 400;
+    }
+
+    strncpy(query, query_buf, sizeof(query) - 1);
+    query[sizeof(query) - 1] = &#39;\0&#39;;
+
+    // 危险：直接拼接用户输入到 SQL 语句
+    sprintf(sql, &quot;SELECT * FROM products WHERE name LIKE &#39;%%%s%%&#39;&quot;, query);
+
+    // 模拟执行 SQL
+    printf(&quot;Executing SQL: %s\n&quot;, sql);</div>
+                                </div>
+
+                                <div class="nested-item">
+                                    <div class="nested-title">get_var @ main.c:19-35</div>
+                                    <div class="code-block">static const char *get_var(struct mg_connection *conn, const char *name, char *buf, size_t buf_size)
+{
+    struct mg_request_info *ri = mg_get_request_info(conn);
+    const char *query_string = ri-&gt;query_string;
+
+    if (query_string == NULL) {
+        return NULL;
+    }
+
+    // 使用 mg_get_var 从查询字符串中提取变量
+    int len = mg_get_var(query_string, strlen(query_string), name, buf, buf_size);
+    if (len &gt; 0) {
+        return buf;
+    }
+    return NULL;
+}</div>
+                                </div>
+
+                            </details>
+
+                        </div>
+                    </details>
+
+                </div>
+
+                <div class="section">
+                    <div class="section-title">漏洞利用结果</div>
+
+                    <div class="empty-state">暂无漏洞利用结果</div>
+
+                </div>
+
+            </div>
+        </div>
+
+        <div class="entry-item" id="entry-2">
+            <div class="entry-header" onclick="toggleEntry(this)">
+                <div>
+                    <div class="entry-title">#2 handle_system</div>
+                    <div class="entry-meta">
+                        main.c |
+                        行 68-87 |
+                        c / civetweb
+                    </div>
+                </div>
+                <span class="toggle-icon">▶</span>
+            </div>
+            <div class="entry-content">
+
+                <div class="section">
+                    <div class="section-title">函数信息</div>
+                    <div class="info-grid">
+                        <div class="info-item">
+                            <div class="info-label">函数名</div>
+                            <div class="info-value">handle_system</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="info-label">文件路径</div>
+                            <div class="info-value">main.c</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="info-label">行号范围</div>
+                            <div class="info-value">68 - 87</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="info-label">项目类型</div>
+                            <div class="info-value">c</div>
+                        </div>
+                    </div>
+                    <details>
+                        <summary>查看代码片段</summary>
+                        <div class="code-block">68: static int handle_system(struct mg_connection *conn, void *cbdata)
+69: {
+70:     char cmd[512];
+71:     char action_buf[1024];
+72: 
+73:     if (get_var(conn, &quot;action&quot;, action_buf, sizeof(action_buf)) == NULL) {
+74:         mg_printf(conn, &quot;HTTP/1.0 400 Bad Request\r\n\r\nMissing parameter &#39;action&#39;&quot;);
+75:         return 400;
+76:     }
+77: 
+78:     // 危险：命令注入
+79:     sprintf(cmd, &quot;echo &#39;Executing: %s&#39; &amp;&amp; date&quot;, action_buf);
+80:     system(cmd);
+81: 
+82:     mg_printf(conn, &quot;HTTP/1.0 200 OK\r\nContent-Type: text/html\r\n\r\n&quot;);
+83:     mg_printf(conn, &quot;&lt;h1&gt;System Command&lt;/h1&gt;&quot;);
+84:     mg_printf(conn, &quot;&lt;p&gt;Action: %s&lt;/p&gt;&quot;, action_buf);
+85: 
+86:     (void)cbdata;
+87:     return 200;
+    // ... (truncated)</div>
+                    </details>
+                </div>
+
+                <div class="section">
+                    <div class="section-title">代码映射 (Code Map)</div>
+                    <p>共 2 个相关函数</p>
+
+                    <details>
+                        <summary>
+                            <strong>handle_system</strong>
+                            <span class="tag tag-info">main.c:68-87</span>
+                        </summary>
+                        <div class="nested-item">
+                            <div class="info-grid">
+                                <div class="info-item">
+                                    <div class="info-label">入口函数</div>
+                                    <div class="info-value">是</div>
+                                </div>
+                                <div class="info-item">
+                                    <div class="info-label">污染源</div>
+                                    <div class="info-value">HTTP请求参数'action'</div>
+                                </div>
+                                <div class="info-item">
+                                    <div class="info-label">污染路径</div>
+                                    <div class="info-value">外部输入->get_var->sprintf->system命令执行</div>
+                                </div>
+                            </div>
+                            <details>
+                                <summary>查看代码</summary>
+                                <div class="code-block">static int handle_system(struct mg_connection *conn, void *cbdata)
+{
+    char cmd[512];
+    char action_buf[1024];
+
+    if (get_var(conn, &quot;action&quot;, action_buf, sizeof(action_buf)) == NULL) {
+        mg_printf(conn, &quot;HTTP/1.0 400 Bad Request\r\n\r\nMissing parameter &#39;action&#39;&quot;);
+        return 400;
+    }
+
+    // 危险：命令注入
+    sprintf(cmd, &quot;echo &#39;Executing: %s&#39; &amp;&amp; date&quot;, action_buf);
+    system(cmd);
+
+    mg_printf(conn, &quot;HTTP/1.0 200 OK\r\nContent-Type: text/html\r\n\r\n&quot;);
+    mg_printf(conn, &quot;&lt;h1&gt;System Command&lt;/h1&gt;&quot;);
+    mg_printf(conn, &quot;&lt;p&gt;Action: %s&lt;/p&gt;&quot;, action_buf);
+
+    (void)cbdata;
+    return 200;
+}</div>
+                            </details>
+                        </div>
+                    </details>
+
+                    <details>
+                        <summary>
+                            <strong>get_var</strong>
+                            <span class="tag tag-info">main.c:19-33</span>
+                        </summary>
+                        <div class="nested-item">
+                            <div class="info-grid">
+                                <div class="info-item">
+                                    <div class="info-label">入口函数</div>
+                                    <div class="info-value">否</div>
+                                </div>
+                                <div class="info-item">
+                                    <div class="info-label">污染源</div>
+                                    <div class="info-value">HTTP查询字符串</div>
+                                </div>
+                                <div class="info-item">
+                                    <div class="info-label">污染路径</div>
+                                    <div class="info-value">mg_get_request_info->mg_get_var->返回用户输入数据</div>
+                                </div>
+                            </div>
+                            <details>
+                                <summary>查看代码</summary>
+                                <div class="code-block">static const char *get_var(struct mg_connection *conn, const char *name, char *buf, size_t buf_size)
+{
+    struct mg_request_info *ri = mg_get_request_info(conn);
+    const char *query_string = ri-&gt;query_string;
+
+    if (query_string == NULL) {
+        return NULL;
+    }
+
+    // 使用 mg_get_var 从查询字符串中提取变量
+    int len = mg_get_var(query_string, strlen(query_string), name, buf, buf_size);
+    if (len &gt; 0) {
+        return buf;
+    }
+    return NULL;
+}</div>
+                            </details>
+                        </div>
+                    </details>
+
+                </div>
+
+                <div class="section">
+                    <div class="section-title">漏洞审计结果</div>
+
+                    <details>
+                        <summary>
+                            <span class="tag tag-danger">存在漏洞</span>
+                            <strong>command_injection</strong>
+                            <span class="tag tag-danger">置信度：高</span>
+                        </summary>
+                        <div class="nested-item">
+                            <div class="info-grid">
+                                <div class="info-item">
+                                    <div class="info-label">漏洞类型</div>
+                                    <div class="info-value">command_injection</div>
+                                </div>
+                                <div class="info-item">
+                                    <div class="info-label">是否存漏洞</div>
+                                    <div class="info-value">存在漏洞</div>
+                                </div>
+                                <div class="info-item">
+                                    <div class="info-label">置信度</div>
+                                    <div class="info-value">高</div>
+                                </div>
+                            </div>
+                            <p><strong>描述:</strong></p>
+                            <p>在handle_system函数中存在严重的命令注入漏洞。用户输入的'action'参数未经任何过滤直接拼接到shell命令中，并通过system()函数执行。攻击者可以通过构造恶意输入执行任意系统命令。</p>
+
+                            <p><strong>污点流向:</strong></p>
+                            <div class="code-block">HTTP请求参数&#39;action&#39; -&gt; get_var()函数 -&gt; action_buf缓冲区 -&gt; sprintf()拼接 -&gt; cmd缓冲区 -&gt; system()命令执行</div>
+
+                            <p><strong>修复建议:</strong></p>
+                            <div class="code-block">1. 使用白名单验证输入内容，只允许特定的安全字符；2. 使用安全的命令执行函数如execve()并传递参数数组；3. 对用户输入进行严格的转义和过滤；4. 避免将用户输入直接拼接到shell命令中；5. 使用最小权限原则运行程序</div>
+
+                            <details>
+                                <summary>相关代码上下文</summary>
+
+                                <div class="nested-item">
+                                    <div class="nested-title">handle_system @ main.c:68-87</div>
+                                    <div class="code-block">static int handle_system(struct mg_connection *conn, void *cbdata)
+{
+    char cmd[512];
+    char action_buf[1024];
+
+    if (get_var(conn, &quot;action&quot;, action_buf, sizeof(action_buf)) == NULL) {
+        mg_printf(conn, &quot;HTTP/1.0 400 Bad Request\r\n\r\nMissing parameter &#39;action&#39;&quot;);
+        return 400;
+    }
+
+    // 危险：命令注入
+    sprintf(cmd, &quot;echo &#39;Executing: %s&#39; &amp;&amp; date&quot;, action_buf);
+    system(cmd);
+
+    mg_printf(conn, &quot;HTTP/1.0 200 OK\r\nContent-Type: text/html\r\n\r\n&quot;);
+    mg_printf(conn, &quot;&lt;h1&gt;System Command&lt;/h1&gt;&quot;);
+    mg_printf(conn, &quot;&lt;p&gt;Action: %s&lt;/p&gt;&quot;, action_buf);
+
+    (void)cbdata;
+    return 200;
+}</div>
+                                </div>
+
+                                <div class="nested-item">
+                                    <div class="nested-title">get_var @ main.c:19-33</div>
+                                    <div class="code-block">static const char *get_var(struct mg_connection *conn, const char *name, char *buf, size_t buf_size)
+{
+    struct mg_request_info *ri = mg_get_request_info(conn);
+    const char *query_string = ri-&gt;query_string;
+
+    if (query_string == NULL) {
+        return NULL;
+    }
+
+    // 使用 mg_get_var 从查询字符串中提取变量
+    int len = mg_get_var(query_string, strlen(query_string), name, buf, buf_size);
+    if (len &gt; 0) {
+        return buf;
+    }
+    return NULL;
+}</div>
+                                </div>
+
+                            </details>
+
+                        </div>
+                    </details>
+
+                </div>
+
+                <div class="section">
+                    <div class="section-title">漏洞利用结果</div>
+
+                    <details>
+                        <summary>
+                            <span class="tag tag-danger">利用成功</span>
+                            <strong>command_injection</strong>
+                        </summary>
+                        <div class="nested-item">
+                            <div class="info-grid">
+                                <div class="info-item">
+                                    <div class="info-label">漏洞类型</div>
+                                    <div class="info-value">command_injection</div>
+                                </div>
+                                <div class="info-item">
+                                    <div class="info-label">利用状态</div>
+                                    <div class="info-value">利用成功</div>
+                                </div>
+                            </div>
+                            <p><strong>PoC 命令:</strong></p>
+                            <div class="code-block">curl -s &quot;http://localhost:8080/system?action=&#39;%20%26%26%20touch%20/tmp/poc_success%20%26%26%20&#39;&quot;</div>
+
+                            <p><strong>执行输出:</strong></p>
+                            <div class="code-block">成功验证命令注入漏洞。通过构造恶意 action 参数 &#39; &amp;&amp; touch /tmp/poc_success &amp;&amp; &#39;，成功在目标系统上创建了 /tmp/poc_success 文件，证明可以执行任意系统命令。漏洞存在于 handle_system 函数中，用户输入的 action 参数未经过滤直接拼接到 shell 命令中并通过 system() 执行。</div>
+
+                        </div>
+                    </details>
+
+                </div>
+
+            </div>
+        </div>
+
+        <div class="entry-item" id="entry-3">
+            <div class="entry-header" onclick="toggleEntry(this)">
+                <div>
+                    <div class="entry-title">#3 handle_file</div>
+                    <div class="entry-meta">
+                        main.c |
+                        行 91-110 |
+                        c / civetweb
+                    </div>
+                </div>
+                <span class="toggle-icon">▶</span>
+            </div>
+            <div class="entry-content">
+
+                <div class="section">
+                    <div class="section-title">函数信息</div>
+                    <div class="info-grid">
+                        <div class="info-item">
+                            <div class="info-label">函数名</div>
+                            <div class="info-value">handle_file</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="info-label">文件路径</div>
+                            <div class="info-value">main.c</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="info-label">行号范围</div>
+                            <div class="info-value">91 - 110</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="info-label">项目类型</div>
+                            <div class="info-value">c</div>
+                        </div>
+                    </div>
+                    <details>
+                        <summary>查看代码片段</summary>
+                        <div class="code-block">91: static int handle_file(struct mg_connection *conn, void *cbdata)
+92: {
+93:     char filepath[256];
+94:     char buffer[1024];
+95:     char filename_buf[1024];
+96: 
+97:     if (get_var(conn, &quot;file&quot;, filename_buf, sizeof(filename_buf)) == NULL) {
+98:         mg_printf(conn, &quot;HTTP/1.0 400 Bad Request\r\n\r\nMissing parameter &#39;file&#39;&quot;);
+99:         return 400;
+100:     }
+101: 
+102:     // 危险：路径遍历
+103:     sprintf(filepath, &quot;/var/www/html/%s&quot;, filename_buf);
+104: 
+105:     FILE *f = fopen(filepath, &quot;r&quot;);
+106:     if (f == NULL) {
+107:         mg_printf(conn, &quot;HTTP/1.0 404 Not Found\r\n\r\nFile not found: %s&quot;, filepath);
+108:         return 404;
+109:     }
+110: 
+    // ... (truncated)</div>
+                    </details>
+                </div>
+
+                <div class="section">
+                    <div class="section-title">代码映射 (Code Map)</div>
+                    <p>共 3 个相关函数</p>
+
+                    <details>
+                        <summary>
+                            <strong>handle_file</strong>
+                            <span class="tag tag-info">main.c:91-110</span>
+                        </summary>
+                        <div class="nested-item">
+                            <div class="info-grid">
+                                <div class="info-item">
+                                    <div class="info-label">入口函数</div>
+                                    <div class="info-value">是</div>
+                                </div>
+                                <div class="info-item">
+                                    <div class="info-label">污染源</div>
+                                    <div class="info-value">HTTP请求参数'file'</div>
+                                </div>
+                                <div class="info-item">
+                                    <div class="info-label">污染路径</div>
+                                    <div class="info-value">外部输入 -> 文件操作</div>
+                                </div>
+                            </div>
+                            <details>
+                                <summary>查看代码</summary>
+                                <div class="code-block">static int handle_file(struct mg_connection *conn, void *cbdata)
+{
+    char filepath[256];
+    char buffer[1024];
+    char filename_buf[1024];
+
+    if (get_var(conn, &quot;file&quot;, filename_buf, sizeof(filename_buf)) == NULL) {
+        mg_printf(conn, &quot;HTTP/1.0 400 Bad Request\r\n\r\nMissing parameter &#39;file&#39;&quot;);
+        return 400;
+    }
+
+    // 危险：路径遍历
+    sprintf(filepath, &quot;/var/www/html/%s&quot;, filename_buf);
+
+    FILE *f = fopen(filepath, &quot;r&quot;);
+    if (f == NULL) {
+        mg_printf(conn, &quot;HTTP/1.0 404 Not Found\r\n\r\nFile not found: %s&quot;, filepath);
+        return 404;
+    }</div>
+                            </details>
+                        </div>
+                    </details>
+
+                    <details>
+                        <summary>
+                            <strong>get_var</strong>
+                            <span class="tag tag-info">main.c:19-30</span>
+                        </summary>
+                        <div class="nested-item">
+                            <div class="info-grid">
+                                <div class="info-item">
+                                    <div class="info-label">入口函数</div>
+                                    <div class="info-value">否</div>
+                                </div>
+                                <div class="info-item">
+                                    <div class="info-label">污染源</div>
+                                    <div class="info-value">HTTP查询字符串</div>
+                                </div>
+                                <div class="info-item">
+                                    <div class="info-label">污染路径</div>
+                                    <div class="info-value">外部输入 -> 参数解析</div>
+                                </div>
+                            </div>
+                            <details>
+                                <summary>查看代码</summary>
+                                <div class="code-block">static const char *get_var(struct mg_connection *conn, const char *name, char *buf, size_t buf_size)
+{
+    struct mg_request_info *ri = mg_get_request_info(conn);
+    const char *query_string = ri-&gt;query_string;
+
+    if (query_string == NULL) {
+        return NULL;
+    }
+
+    // 使用 mg_get_var 从查询字符串中提取变量
+    int len = mg_get_var(query_string, strlen(query_string), name, buf, buf_size);
+    if (len &gt; 0) {
+        return buf;
+    }
+    return NULL;
+}</div>
+                            </details>
+                        </div>
+                    </details>
+
+                    <details>
+                        <summary>
+                            <strong>handle_read</strong>
+                            <span class="tag tag-info">main.c:122-140</span>
+                        </summary>
+                        <div class="nested-item">
+                            <div class="info-grid">
+                                <div class="info-item">
+                                    <div class="info-label">入口函数</div>
+                                    <div class="info-value">否</div>
+                                </div>
+                                <div class="info-item">
+                                    <div class="info-label">污染源</div>
+                                    <div class="info-value">HTTP请求参数'name'</div>
+                                </div>
+                                <div class="info-item">
+                                    <div class="info-label">污染路径</div>
+                                    <div class="info-value">外部输入 -> 文件操作</div>
+                                </div>
+                            </div>
+                            <details>
+                                <summary>查看代码</summary>
+                                <div class="code-block">static int handle_read(struct mg_connection *conn, void *cbdata)
+{
+    char filepath[512];
+    char buffer[1024];
+    char filename_buf[256];
+
+    if (get_var(conn, &quot;name&quot;, filename_buf, sizeof(filename_buf)) == NULL) {
+        mg_printf(conn, &quot;HTTP/1.0 400 Bad Request\r\n\r\nMissing parameter &#39;name&#39;&quot;);
+        return 400;
+    }
+
+    // 危险：直接拼接用户输入，没有校验路径穿越
+    // 攻击者可以使用 ../../../etc/passwd 读取任意文件
+    sprintf(filepath, &quot;./%s&quot;, filename_buf);
+
+    FILE *f = fopen(filepath, &quot;r&quot;);
+    if (f == NULL) {
+        mg_printf(conn, &quot;HTTP/1.0 404 Not Found\r\n\r\nFile not found&quot;);
+        return 404;
+    }</div>
+                            </details>
+                        </div>
+                    </details>
+
+                </div>
+
+                <div class="section">
+                    <div class="section-title">漏洞审计结果</div>
+
+                    <details>
+                        <summary>
+                            <span class="tag tag-danger">存在漏洞</span>
+                            <strong>path_traversal</strong>
+                            <span class="tag tag-danger">置信度：高</span>
+                        </summary>
+                        <div class="nested-item">
+                            <div class="info-grid">
+                                <div class="info-item">
+                                    <div class="info-label">漏洞类型</div>
+                                    <div class="info-value">path_traversal</div>
+                                </div>
+                                <div class="info-item">
+                                    <div class="info-label">是否存漏洞</div>
+                                    <div class="info-value">存在漏洞</div>
+                                </div>
+                                <div class="info-item">
+                                    <div class="info-label">置信度</div>
+                                    <div class="info-value">高</div>
+                                </div>
+                            </div>
+                            <p><strong>描述:</strong></p>
+                            <p>在 handle_file 和 handle_read 函数中存在严重的路径遍历漏洞。攻击者可以通过构造包含 '../' 序列的文件名参数，访问服务器上的任意文件。handle_file 函数允许访问 /var/www/html 目录外的文件，handle_read 函数允许访问当前工作目录外的任意文件。</p>
+
+                            <p><strong>污点流向:</strong></p>
+                            <div class="code-block">HTTP请求参数(&#39;file&#39;/&#39;name&#39;) -&gt; get_var函数解析 -&gt; sprintf路径拼接 -&gt; fopen文件操作 -&gt; 文件内容读取和返回</div>
+
+                            <p><strong>修复建议:</strong></p>
+                            <div class="code-block">1. 对用户输入进行路径规范化处理；2. 检查并过滤 &#39;../&#39; 等路径遍历序列；3. 使用白名单机制限制允许访问的文件类型；4. 使用绝对路径并限制在指定目录范围内；5. 使用安全的文件操作函数如 realpath() 进行路径解析</div>
+
+                            <details>
+                                <summary>相关代码上下文</summary>
+
+                                <div class="nested-item">
+                                    <div class="nested-title">handle_file @ main.c:91-110</div>
+                                    <div class="code-block">static int handle_file(struct mg_connection *conn, void *cbdata)
+{
+    char filepath[256];
+    char buffer[1024];
+    char filename_buf[1024];
+
+    if (get_var(conn, &quot;file&quot;, filename_buf, sizeof(filename_buf)) == NULL) {
+        mg_printf(conn, &quot;HTTP/1.0 400 Bad Request\r\n\r\nMissing parameter &#39;file&#39;&quot;);
+        return 400;
+    }
+
+    // 危险：路径遍历
+    sprintf(filepath, &quot;/var/www/html/%s&quot;, filename_buf);
+
+    FILE *f = fopen(filepath, &quot;r&quot;);
+    if (f == NULL) {
+        mg_printf(conn, &quot;HTTP/1.0 404 Not Found\r\n\r\nFile not found: %s&quot;, filepath);
+        return 404;
+    }</div>
+                                </div>
+
+                                <div class="nested-item">
+                                    <div class="nested-title">get_var @ main.c:19-30</div>
+                                    <div class="code-block">static const char *get_var(struct mg_connection *conn, const char *name, char *buf, size_t buf_size)
+{
+    struct mg_request_info *ri = mg_get_request_info(conn);
+    const char *query_string = ri-&gt;query_string;
+
+    if (query_string == NULL) {
+        return NULL;
+    }
+
+    // 使用 mg_get_var 从查询字符串中提取变量
+    int len = mg_get_var(query_string, strlen(query_string), name, buf, buf_size);
+    if (len &gt; 0) {
+        return buf;
+    }
+    return NULL;
+}</div>
+                                </div>
+
+                                <div class="nested-item">
+                                    <div class="nested-title">handle_read @ main.c:122-140</div>
+                                    <div class="code-block">static int handle_read(struct mg_connection *conn, void *cbdata)
+{
+    char filepath[512];
+    char buffer[1024];
+    char filename_buf[256];
+
+    if (get_var(conn, &quot;name&quot;, filename_buf, sizeof(filename_buf)) == NULL) {
+        mg_printf(conn, &quot;HTTP/1.0 400 Bad Request\r\n\r\nMissing parameter &#39;name&#39;&quot;);
+        return 400;
+    }
+
+    // 危险：直接拼接用户输入，没有校验路径穿越
+    // 攻击者可以使用 ../../../etc/passwd 读取任意文件
+    sprintf(filepath, &quot;./%s&quot;, filename_buf);
+
+    FILE *f = fopen(filepath, &quot;r&quot;);
+    if (f == NULL) {
+        mg_printf(conn, &quot;HTTP/1.0 404 Not Found\r\n\r\nFile not found&quot;);
+        return 404;
+    }</div>
+                                </div>
+
+                            </details>
+
+                        </div>
+                    </details>
+
+                </div>
+
+                <div class="section">
+                    <div class="section-title">漏洞利用结果</div>
+
+                    <div class="empty-state">暂无漏洞利用结果</div>
+
+                </div>
+
+            </div>
+        </div>
+
+        <div class="entry-item" id="entry-4">
+            <div class="entry-header" onclick="toggleEntry(this)">
+                <div>
+                    <div class="entry-title">#4 handle_read</div>
+                    <div class="entry-meta">
+                        main.c |
+                        行 122-141 |
+                        c / civetweb
+                    </div>
+                </div>
+                <span class="toggle-icon">▶</span>
+            </div>
+            <div class="entry-content">
+
+                <div class="section">
+                    <div class="section-title">函数信息</div>
+                    <div class="info-grid">
+                        <div class="info-item">
+                            <div class="info-label">函数名</div>
+                            <div class="info-value">handle_read</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="info-label">文件路径</div>
+                            <div class="info-value">main.c</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="info-label">行号范围</div>
+                            <div class="info-value">122 - 141</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="info-label">项目类型</div>
+                            <div class="info-value">c</div>
+                        </div>
+                    </div>
+                    <details>
+                        <summary>查看代码片段</summary>
+                        <div class="code-block">122: static int handle_read(struct mg_connection *conn, void *cbdata)
+123: {
+124:     char filepath[512];
+125:     char buffer[1024];
+126:     char filename_buf[256];
+127: 
+128:     if (get_var(conn, &quot;name&quot;, filename_buf, sizeof(filename_buf)) == NULL) {
+129:         mg_printf(conn, &quot;HTTP/1.0 400 Bad Request\r\n\r\nMissing parameter &#39;name&#39;&quot;);
+130:         return 400;
+131:     }
+132: 
+133:     // 危险：直接拼接用户输入，没有校验路径穿越
+134:     // 攻击者可以使用 ../../../etc/passwd 读取任意文件
+135:     sprintf(filepath, &quot;./%s&quot;, filename_buf);
+136: 
+137:     FILE *f = fopen(filepath, &quot;r&quot;);
+138:     if (f == NULL) {
+139:         mg_printf(conn, &quot;HTTP/1.0 404 Not Found\r\n\r\nFile not found&quot;);
+140:         return 404;
+141:     }
+    // ... (truncated)</div>
+                    </details>
+                </div>
+
+                <div class="section">
+                    <div class="section-title">代码映射 (Code Map)</div>
+                    <p>共 2 个相关函数</p>
+
+                    <details>
+                        <summary>
+                            <strong>handle_read</strong>
+                            <span class="tag tag-info">main.c:122-141</span>
+                        </summary>
+                        <div class="nested-item">
+                            <div class="info-grid">
+                                <div class="info-item">
+                                    <div class="info-label">入口函数</div>
+                                    <div class="info-value">是</div>
+                                </div>
+                                <div class="info-item">
+                                    <div class="info-label">污染源</div>
+                                    <div class="info-value">get_var(conn, "name", filename_buf, sizeof(filename_buf))</div>
+                                </div>
+                                <div class="info-item">
+                                    <div class="info-label">污染路径</div>
+                                    <div class="info-value">用户输入 -> filename_buf -> filepath -> fopen</div>
+                                </div>
+                            </div>
+                            <details>
+                                <summary>查看代码</summary>
+                                <div class="code-block">static int handle_read(struct mg_connection *conn, void *cbdata)
+{
+    char filepath[512];
+    char buffer[1024];
+    char filename_buf[256];
+
+    if (get_var(conn, &quot;name&quot;, filename_buf, sizeof(filename_buf)) == NULL) {
+        mg_printf(conn, &quot;HTTP/1.0 400 Bad Request\r\n\r\nMissing parameter &#39;name&#39;&quot;);
+        return 400;
+    }
+
+    // 危险：直接拼接用户输入，没有校验路径穿越
+    // 攻击者可以使用 ../../../etc/passwd 读取任意文件
+    sprintf(filepath, &quot;./%s&quot;, filename_buf);
+
+    FILE *f = fopen(filepath, &quot;r&quot;);
+    if (f == NULL) {
+        mg_printf(conn, &quot;HTTP/1.0 404 Not Found\r\n\r\nFile not found&quot;);
+        return 404;
+    }</div>
+                            </details>
+                        </div>
+                    </details>
+
+                    <details>
+                        <summary>
+                            <strong>get_var</strong>
+                            <span class="tag tag-info">main.c:19-33</span>
+                        </summary>
+                        <div class="nested-item">
+                            <div class="info-grid">
+                                <div class="info-item">
+                                    <div class="info-label">入口函数</div>
+                                    <div class="info-value">否</div>
+                                </div>
+                                <div class="info-item">
+                                    <div class="info-label">污染源</div>
+                                    <div class="info-value">mg_get_var(query_string, strlen(query_string), name, buf, buf_size)</div>
+                                </div>
+                                <div class="info-item">
+                                    <div class="info-label">污染路径</div>
+                                    <div class="info-value">HTTP查询参数 -> buf -> 返回给调用者</div>
+                                </div>
+                            </div>
+                            <details>
+                                <summary>查看代码</summary>
+                                <div class="code-block">static const char *get_var(struct mg_connection *conn, const char *name, char *buf, size_t buf_size)
+{
+    struct mg_request_info *ri = mg_get_request_info(conn);
+    const char *query_string = ri-&gt;query_string;
+
+    if (query_string == NULL) {
+        return NULL;
+    }
+
+    // 使用 mg_get_var 从查询字符串中提取变量
+    int len = mg_get_var(query_string, strlen(query_string), name, buf, buf_size);
+    if (len &gt; 0) {
+        return buf;
+    }
+    return NULL;
+}</div>
+                            </details>
+                        </div>
+                    </details>
+
+                </div>
+
+                <div class="section">
+                    <div class="section-title">漏洞审计结果</div>
+
+                    <details>
+                        <summary>
+                            <span class="tag tag-danger">存在漏洞</span>
+                            <strong>path_traversal</strong>
+                            <span class="tag tag-danger">置信度：高</span>
+                        </summary>
+                        <div class="nested-item">
+                            <div class="info-grid">
+                                <div class="info-item">
+                                    <div class="info-label">漏洞类型</div>
+                                    <div class="info-value">path_traversal</div>
+                                </div>
+                                <div class="info-item">
+                                    <div class="info-label">是否存漏洞</div>
+                                    <div class="info-value">存在漏洞</div>
+                                </div>
+                                <div class="info-item">
+                                    <div class="info-label">置信度</div>
+                                    <div class="info-value">高</div>
+                                </div>
+                            </div>
+                            <p><strong>描述:</strong></p>
+                            <p>在handle_read函数中存在严重的路径遍历漏洞。该函数直接从HTTP查询参数'name'获取用户输入，未经过任何验证就直接拼接到文件路径中，然后使用fopen函数打开文件。攻击者可以通过构造包含'../'序列的文件名来访问服务器上的任意文件，如使用'../../../etc/passwd'读取系统敏感文件。</p>
+
+                            <p><strong>污点流向:</strong></p>
+                            <div class="code-block">HTTP查询参数 -&gt; get_var函数 -&gt; filename_buf缓冲区 -&gt; sprintf拼接filepath -&gt; fopen危险函数调用</div>
+
+                            <p><strong>修复建议:</strong></p>
+                            <div class="code-block">1. 对用户输入进行严格的路径验证，过滤或拒绝包含&#39;..&#39;、&#39;/&#39;等特殊字符的输入；2. 使用白名单机制限制可访问的文件类型和目录；3. 对路径进行规范化处理，然后检查是否在允许的目录范围内；4. 使用安全的文件操作函数，如realpath()来解析绝对路径；5. 实施最小权限原则，限制Web服务器进程的文件系统访问权限。</div>
+
+                            <details>
+                                <summary>相关代码上下文</summary>
+
+                                <div class="nested-item">
+                                    <div class="nested-title">handle_read @ main.c:122-141</div>
+                                    <div class="code-block">static int handle_read(struct mg_connection *conn, void *cbdata)
+{
+    char filepath[512];
+    char buffer[1024];
+    char filename_buf[256];
+
+    if (get_var(conn, &quot;name&quot;, filename_buf, sizeof(filename_buf)) == NULL) {
+        mg_printf(conn, &quot;HTTP/1.0 400 Bad Request\r\n\r\nMissing parameter &#39;name&#39;&quot;);
+        return 400;
+    }
+
+    // 危险：直接拼接用户输入，没有校验路径穿越
+    // 攻击者可以使用 ../../../etc/passwd 读取任意文件
+    sprintf(filepath, &quot;./%s&quot;, filename_buf);
+
+    FILE *f = fopen(filepath, &quot;r&quot;);
+    if (f == NULL) {
+        mg_printf(conn, &quot;HTTP/1.0 404 Not Found\r\n\r\nFile not found&quot;);
+        return 404;
+    }</div>
+                                </div>
+
+                                <div class="nested-item">
+                                    <div class="nested-title">get_var @ main.c:19-33</div>
+                                    <div class="code-block">static const char *get_var(struct mg_connection *conn, const char *name, char *buf, size_t buf_size)
+{
+    struct mg_request_info *ri = mg_get_request_info(conn);
+    const char *query_string = ri-&gt;query_string;
+
+    if (query_string == NULL) {
+        return NULL;
+    }
+
+    // 使用 mg_get_var 从查询字符串中提取变量
+    int len = mg_get_var(query_string, strlen(query_string), name, buf, buf_size);
+    if (len &gt; 0) {
+        return buf;
+    }
+    return NULL;
+}</div>
+                                </div>
+
+                            </details>
+
+                        </div>
+                    </details>
+
+                </div>
+
+                <div class="section">
+                    <div class="section-title">漏洞利用结果</div>
+
+                    <details>
+                        <summary>
+                            <span class="tag tag-danger">利用成功</span>
+                            <strong>path_traversal</strong>
+                        </summary>
+                        <div class="nested-item">
+                            <div class="info-grid">
+                                <div class="info-item">
+                                    <div class="info-label">漏洞类型</div>
+                                    <div class="info-value">path_traversal</div>
+                                </div>
+                                <div class="info-item">
+                                    <div class="info-label">利用状态</div>
+                                    <div class="info-value">利用成功</div>
+                                </div>
+                            </div>
+                            <p><strong>PoC 命令:</strong></p>
+                            <div class="code-block">curl &quot;http://localhost:8080/read?name=../../../../../../../etc/passwd&quot;</div>
+
+                            <p><strong>执行输出:</strong></p>
+                            <div class="code-block">成功验证路径遍历漏洞。通过构造包含多个 &#39;../&#39; 序列的路径（../../../../../../../etc/passwd），成功读取了系统的 /etc/passwd 文件内容。输出中包含了 root:*:0:0:System Administrator:/var/root:/bin/sh 等敏感系统用户信息，确认漏洞存在且可被利用。</div>
+
+                        </div>
+                    </details>
+
+                </div>
+
+            </div>
+        </div>
+
+        <div class="entry-item" id="entry-5">
+            <div class="entry-header" onclick="toggleEntry(this)">
+                <div>
+                    <div class="entry-title">#5 handle_user</div>
+                    <div class="entry-meta">
+                        main.c |
+                        行 154-173 |
+                        c / civetweb
+                    </div>
+                </div>
+                <span class="toggle-icon">▶</span>
+            </div>
+            <div class="entry-content">
+
+                <div class="section">
+                    <div class="section-title">函数信息</div>
+                    <div class="info-grid">
+                        <div class="info-item">
+                            <div class="info-label">函数名</div>
+                            <div class="info-value">handle_user</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="info-label">文件路径</div>
+                            <div class="info-value">main.c</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="info-label">行号范围</div>
+                            <div class="info-value">154 - 173</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="info-label">项目类型</div>
+                            <div class="info-value">c</div>
+                        </div>
+                    </div>
+                    <details>
+                        <summary>查看代码片段</summary>
+                        <div class="code-block">154: static int handle_user(struct mg_connection *conn, void *cbdata)
+155: {
+156:     char name[64];
+157:     char email[128];
+158:     char response[512];
+159:     char name_buf[1024];
+160:     char email_buf[1024];
+161: 
+162:     if (get_var(conn, &quot;name&quot;, name_buf, sizeof(name_buf)) == NULL ||
+163:         get_var(conn, &quot;email&quot;, email_buf, sizeof(email_buf)) == NULL) {
+164:         mg_printf(conn, &quot;HTTP/1.0 400 Bad Request\r\n\r\nMissing parameters&quot;);
+165:         return 400;
+166:     }
+167: 
+168:     // 危险：没有检查长度
+169:     strcpy(name, name_buf);
+170:     strcpy(email, email_buf);
+171: 
+172:     // 危险：格式化字符串漏洞
+173:     sprintf(response, name_buf);
+    // ... (truncated)</div>
+                    </details>
+                </div>
+
+                <div class="section">
+                    <div class="section-title">代码映射 (Code Map)</div>
+                    <p>共 2 个相关函数</p>
+
+                    <details>
+                        <summary>
+                            <strong>handle_user</strong>
+                            <span class="tag tag-info">main.c:154-173</span>
+                        </summary>
+                        <div class="nested-item">
+                            <div class="info-grid">
+                                <div class="info-item">
+                                    <div class="info-label">入口函数</div>
+                                    <div class="info-value">是</div>
+                                </div>
+                                <div class="info-item">
+                                    <div class="info-label">污染源</div>
+                                    <div class="info-value">HTTP GET/POST 参数 'name' 和 'email'</div>
+                                </div>
+                                <div class="info-item">
+                                    <div class="info-label">污染路径</div>
+                                    <div class="info-value">外部输入 -> get_var -> strcpy -> sprintf</div>
+                                </div>
+                            </div>
+                            <details>
+                                <summary>查看代码</summary>
+                                <div class="code-block">static int handle_user(struct mg_connection *conn, void *cbdata)
+{
+    char name[64];
+    char email[128];
+    char response[512];
+    char name_buf[1024];
+    char email_buf[1024];
+
+    if (get_var(conn, &quot;name&quot;, name_buf, sizeof(name_buf)) == NULL ||
+        get_var(conn, &quot;email&quot;, email_buf, sizeof(email_buf)) == NULL) {
+        mg_printf(conn, &quot;HTTP/1.0 400 Bad Request\r\n\r\nMissing parameters&quot;);
+        return 400;
+    }
+
+    // 危险：没有检查长度
+    strcpy(name, name_buf);
+    strcpy(email, email_buf);
+
+    // 危险：格式化字符串漏洞
+    sprintf(response, name_buf);</div>
+                            </details>
+                        </div>
+                    </details>
+
+                    <details>
+                        <summary>
+                            <strong>get_var</strong>
+                            <span class="tag tag-info">main.c:19-33</span>
+                        </summary>
+                        <div class="nested-item">
+                            <div class="info-grid">
+                                <div class="info-item">
+                                    <div class="info-label">入口函数</div>
+                                    <div class="info-value">否</div>
+                                </div>
+                                <div class="info-item">
+                                    <div class="info-label">污染源</div>
+                                    <div class="info-value">mg_get_request_info->query_string</div>
+                                </div>
+                                <div class="info-item">
+                                    <div class="info-label">污染路径</div>
+                                    <div class="info-value">HTTP 查询字符串 -> mg_get_var -> 缓冲区</div>
+                                </div>
+                            </div>
+                            <details>
+                                <summary>查看代码</summary>
+                                <div class="code-block">static const char *get_var(struct mg_connection *conn, const char *name, char *buf, size_t buf_size)
+{
+    struct mg_request_info *ri = mg_get_request_info(conn);
+    const char *query_string = ri-&gt;query_string;
+
+    if (query_string == NULL) {
+        return NULL;
+    }
+
+    // 使用 mg_get_var 从查询字符串中提取变量
+    int len = mg_get_var(query_string, strlen(query_string), name, buf, buf_size);
+    if (len &gt; 0) {
+        return buf;
+    }
+    return NULL;
+}</div>
+                            </details>
+                        </div>
+                    </details>
+
+                </div>
+
+                <div class="section">
+                    <div class="section-title">漏洞审计结果</div>
+
+                    <details>
+                        <summary>
+                            <span class="tag tag-success">未发现问题</span>
+                            <strong>command_injection</strong>
+                            <span class="tag tag-danger">置信度：高</span>
+                        </summary>
+                        <div class="nested-item">
+                            <div class="info-grid">
+                                <div class="info-item">
+                                    <div class="info-label">漏洞类型</div>
+                                    <div class="info-value">command_injection</div>
+                                </div>
+                                <div class="info-item">
+                                    <div class="info-label">是否存漏洞</div>
+                                    <div class="info-value">未发现问题</div>
+                                </div>
+                                <div class="info-item">
+                                    <div class="info-label">置信度</div>
+                                    <div class="info-value">高</div>
+                                </div>
+                            </div>
+                            <p><strong>描述:</strong></p>
+                            <p>在handle_user函数中未发现命令注入漏洞。该函数存在缓冲区溢出和格式化字符串漏洞，但没有调用任何命令执行相关函数（如system、popen、exec系列等）。</p>
+
+                            <p><strong>污点流向:</strong></p>
+                            <div class="code-block">外部输入（HTTP参数name和email）-&gt; get_var -&gt; strcpy -&gt; sprintf -&gt; 输出到HTTP响应，没有流向命令执行函数</div>
+
+                            <p><strong>修复建议:</strong></p>
+                            <div class="code-block">虽然handle_user函数没有命令注入漏洞，但建议修复其中的缓冲区溢出和格式化字符串漏洞：1) 使用strncpy替代strcpy并检查长度；2) 使用snprintf替代sprintf；3) 对用户输入进行适当的验证和过滤</div>
+
+                            <details>
+                                <summary>相关代码上下文</summary>
+
+                                <div class="nested-item">
+                                    <div class="nested-title">handle_user @ main.c:154-173</div>
+                                    <div class="code-block">static int handle_user(struct mg_connection *conn, void *cbdata)
+{
+    char name[64];
+    char email[128];
+    char response[512];
+    char name_buf[1024];
+    char email_buf[1024];
+
+    if (get_var(conn, &quot;name&quot;, name_buf, sizeof(name_buf)) == NULL ||
+        get_var(conn, &quot;email&quot;, email_buf, sizeof(email_buf)) == NULL) {
+        mg_printf(conn, &quot;HTTP/1.0 400 Bad Request\r\n\r\nMissing parameters&quot;);
+        return 400;
+    }
+
+    // 危险：没有检查长度
+    strcpy(name, name_buf);
+    strcpy(email, email_buf);
+
+    // 危险：格式化字符串漏洞
+    sprintf(response, name_buf);</div>
+                                </div>
+
+                                <div class="nested-item">
+                                    <div class="nested-title">get_var @ main.c:19-33</div>
+                                    <div class="code-block">static const char *get_var(struct mg_connection *conn, const char *name, char *buf, size_t buf_size)
+{
+    struct mg_request_info *ri = mg_get_request_info(conn);
+    const char *query_string = ri-&gt;query_string;
+
+    if (query_string == NULL) {
+        return NULL;
+    }
+
+    // 使用 mg_get_var 从查询字符串中提取变量
+    int len = mg_get_var(query_string, strlen(query_string), name, buf, buf_size);
+    if (len &gt; 0) {
+        return buf;
+    }
+    return NULL;
+}</div>
+                                </div>
+
+                            </details>
+
+                        </div>
+                    </details>
+
+                </div>
+
+                <div class="section">
+                    <div class="section-title">漏洞利用结果</div>
+
+                    <div class="empty-state">暂无漏洞利用结果</div>
+
+                </div>
+
+            </div>
+        </div>
+
+        <div class="entry-item" id="entry-6">
+            <div class="entry-header" onclick="toggleEntry(this)">
+                <div>
+                    <div class="entry-title">#6 handle_safe</div>
+                    <div class="entry-meta">
+                        main.c |
+                        行 185-204 |
+                        c / civetweb
+                    </div>
+                </div>
+                <span class="toggle-icon">▶</span>
+            </div>
+            <div class="entry-content">
+
+                <div class="section">
+                    <div class="section-title">函数信息</div>
+                    <div class="info-grid">
+                        <div class="info-item">
+                            <div class="info-label">函数名</div>
+                            <div class="info-value">handle_safe</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="info-label">文件路径</div>
+                            <div class="info-value">main.c</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="info-label">行号范围</div>
+                            <div class="info-value">185 - 204</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="info-label">项目类型</div>
+                            <div class="info-value">c</div>
+                        </div>
+                    </div>
+                    <details>
+                        <summary>查看代码片段</summary>
+                        <div class="code-block">185: static int handle_safe(struct mg_connection *conn, void *cbdata)
+186: {
+187:     char input_buf[1024];
+188: 
+189:     if (get_var(conn, &quot;data&quot;, input_buf, sizeof(input_buf)) == NULL) {
+190:         mg_printf(conn, &quot;HTTP/1.0 400 Bad Request\r\n\r\nMissing parameter &#39;data&#39;&quot;);
+191:         return 400;
+192:     }
+193: 
+194:     // 安全：使用 snprintf 限制长度
+195:     char safe_buffer[256];
+196:     snprintf(safe_buffer, sizeof(safe_buffer), &quot;%s&quot;, input_buf);
+197: 
+198:     // 安全：对白名单字符进行验证
+199:     for (char *p = safe_buffer; *p; p++) {
+200:         if (!((*p &gt;= &#39;a&#39; &amp;&amp; *p &lt;= &#39;z&#39;) || (*p &gt;= &#39;A&#39; &amp;&amp; *p &lt;= &#39;Z&#39;) || (*p &gt;= &#39;0&#39; &amp;&amp; *p &lt;= &#39;9&#39;))) {
+201:             mg_printf(conn, &quot;HTTP/1.0 400 Bad Request\r\n\r\nInvalid characters&quot;);
+202:             return 400;
+203:         }
+204:     }
+    // ... (truncated)</div>
+                    </details>
+                </div>
+
+                <div class="section">
+                    <div class="section-title">代码映射 (Code Map)</div>
+                    <p>共 2 个相关函数</p>
+
+                    <details>
+                        <summary>
+                            <strong>handle_safe</strong>
+                            <span class="tag tag-info">main.c:185-204</span>
+                        </summary>
+                        <div class="nested-item">
+                            <div class="info-grid">
+                                <div class="info-item">
+                                    <div class="info-label">入口函数</div>
+                                    <div class="info-value">是</div>
+                                </div>
+                                <div class="info-item">
+                                    <div class="info-label">污染源</div>
+                                    <div class="info-value">HTTP GET 参数 'data'</div>
+                                </div>
+                                <div class="info-item">
+                                    <div class="info-label">污染路径</div>
+                                    <div class="info-value">外部输入 -> get_var -> input_buf -> snprintf -> safe_buffer -> 字符验证 -> mg_printf 输出</div>
+                                </div>
+                            </div>
+                            <details>
+                                <summary>查看代码</summary>
+                                <div class="code-block">static int handle_safe(struct mg_connection *conn, void *cbdata)
+{
+    char input_buf[1024];
+
+    if (get_var(conn, &quot;data&quot;, input_buf, sizeof(input_buf)) == NULL) {
+        mg_printf(conn, &quot;HTTP/1.0 400 Bad Request\r\n\r\nMissing parameter &#39;data&#39;&quot;);
+        return 400;
+    }
+
+    // 安全：使用 snprintf 限制长度
+    char safe_buffer[256];
+    snprintf(safe_buffer, sizeof(safe_buffer), &quot;%s&quot;, input_buf);
+
+    // 安全：对白名单字符进行验证
+    for (char *p = safe_buffer; *p; p++) {
+        if (!((*p &gt;= &#39;a&#39; &amp;&amp; *p &lt;= &#39;z&#39;) || (*p &gt;= &#39;A&#39; &amp;&amp; *p &lt;= &#39;Z&#39;) || (*p &gt;= &#39;0&#39; &amp;&amp; *p &lt;= &#39;9&#39;))) {
+            mg_printf(conn, &quot;HTTP/1.0 400 Bad Request\r\n\r\nInvalid characters&quot;);
+            return 400;
+        }
+    }</div>
+                            </details>
+                        </div>
+                    </details>
+
+                    <details>
+                        <summary>
+                            <strong>get_var</strong>
+                            <span class="tag tag-info">main.c:19-33</span>
+                        </summary>
+                        <div class="nested-item">
+                            <div class="info-grid">
+                                <div class="info-item">
+                                    <div class="info-label">入口函数</div>
+                                    <div class="info-value">否</div>
+                                </div>
+                                <div class="info-item">
+                                    <div class="info-label">污染源</div>
+                                    <div class="info-value">HTTP 查询字符串</div>
+                                </div>
+                                <div class="info-item">
+                                    <div class="info-label">污染路径</div>
+                                    <div class="info-value">mg_get_request_info -> query_string -> mg_get_var -> buf 输出</div>
+                                </div>
+                            </div>
+                            <details>
+                                <summary>查看代码</summary>
+                                <div class="code-block">static const char *get_var(struct mg_connection *conn, const char *name, char *buf, size_t buf_size)
+{
+    struct mg_request_info *ri = mg_get_request_info(conn);
+    const char *query_string = ri-&gt;query_string;
+
+    if (query_string == NULL) {
+        return NULL;
+    }
+
+    // 使用 mg_get_var 从查询字符串中提取变量
+    int len = mg_get_var(query_string, strlen(query_string), name, buf, buf_size);
+    if (len &gt; 0) {
+        return buf;
+    }
+    return NULL;
+}</div>
+                            </details>
+                        </div>
+                    </details>
+
+                </div>
+
+                <div class="section">
+                    <div class="section-title">漏洞审计结果</div>
+
+                    <div class="empty-state">暂无漏洞审计结果</div>
+
+                </div>
+
+                <div class="section">
+                    <div class="section-title">漏洞利用结果</div>
+
+                    <div class="empty-state">暂无漏洞利用结果</div>
+
+                </div>
+
+            </div>
+        </div>
+
+    </div>
+    <script>
+        function toggleEntry(header) {
+            const entry = header.parentElement;
+            entry.classList.toggle('expanded');
+        }
+    </script>
+</body>
+</html>

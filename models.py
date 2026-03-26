@@ -37,6 +37,7 @@ class CodeContext(BaseModel):
 class TraceResult(BaseModel):
     """追踪结果"""
     function_info: FunctionInfo
+    code_logic: str = ""  # 代码逻辑描述
     code_map: List[CodeContext] = []
     audit_results: List['AuditResult'] = []  # 漏洞审计结果
     exploit_results: List['ExploitResult'] = []  # 漏洞利用结果
