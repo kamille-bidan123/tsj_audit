@@ -35,8 +35,46 @@ class PasswordResetSubmitTool:
                         "type": "string",
                         "description": "审计发现的总结",
                     },
+                    "is_vulnerable": {
+                        "type": "boolean",
+                        "description": "是否存在密码重置漏洞",
+                    },
+                    "confidence": {
+                        "type": "string",
+                        "enum": ["high", "medium", "low"],
+                        "description": "漏洞置信度",
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "漏洞描述",
+                    },
+                    "taint_flow": {
+                        "type": "string",
+                        "description": "污点流向描述",
+                    },
+                    "recommendation": {
+                        "type": "string",
+                        "description": "修复建议",
+                    },
+                    "code_map": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "function_name": {"type": "string"},
+                                "file_path": {"type": "string"},
+                                "line_start": {"type": "integer"},
+                                "line_end": {"type": "integer"},
+                                "code_snippet": {"type": "string"},
+                                "is_entry_point": {"type": "boolean"},
+                                "taint_source": {"type": "string"},
+                                "taint_path": {"type": "string"},
+                            },
+                        },
+                        "description": "相关代码上下文列表",
+                    },
                 },
-                "required": ["summary"],
+                "required": ["is_vulnerable", "confidence"],
             },
         },
     }
@@ -166,10 +204,25 @@ class PasswordResetAgent:
 当你认为已经审计完成时，调用 submit_password_reset 工具提交审计结果。
 
 强制要求：
-你应该只关注上面提供的接口函数相关的数据流和代码流和代码路径，不要偏离主题去分析其他无关的代码。
-你应该只关注上面提供的接口函数相关的数据流和代码路径，不要偏离主题去分析其他无关的代码。
-你应该只关注上面提供的接口函数相关的数据流和代码路径，不要偏离主题去分析其他无关的代码。
-重要的事情说三遍"""
+- 你应该只关注上面提供的接口函数{self.function_info.func_name}相关的数据流和代码路径，不要偏离主题去分析其他无关的代码。
+- 你应该只关注上面提供的接口函数{self.function_info.func_name}相关的数据流和代码路径，不要偏离主题去分析其他无关的代码。
+- 你应该只关注上面提供的接口函数{self.function_info.func_name}相关的数据流和代码路径，不要偏离主题去分析其他无关的代码。
+重要的事情说三遍
+- 禁止直接搜索关键词的名字，应该通过分析数据流来发现潜在的命令注入漏洞
+- 禁止全局扫描关键词调用
+- 禁止在与接口函数无关的代码中分析命令注入漏洞
+
+分析前检查：
+- 确认要分析的函数数据流与接口函数相关
+- 确认数据流相关的具体原因，是参数传递、全局变量、还是其他方式
+- 如果不能确认数据流与接口函数相关，则不应该调用工具获取与接口函数无关的代码信息
+
+
+【为什么】
+- 直接搜索关键词会产生大量误报
+- 只有从指定入口追踪的数据流才是有效审计路径
+- 违反此规则的分析结果将被视为无效
+"""
 
     def _build_user_message(self) -> str:
         """构建用户消息，包含 codemap"""
@@ -261,8 +314,19 @@ class PasswordResetAgent:
                         self._save_conversation_history(messages)
                         return self._parse_audit_result(arguments, messages)
 
+                    # 特殊处理，禁止直接search_code搜索关键词
+                    if func_name == "search_code" and "pattern" in arguments:
+                        pattern = arguments["pattern"]
+                        all_keywords = (self.RESET_KEYWORDS + self.OLD_PASSWORD_KEYWORDS +
+                                       self.TOKEN_KEYWORDS + self.SECURITY_KEYWORDS)
+                        if pattern in all_keywords:
+                            print(f"  [警告] 禁止直接搜索关键词 '{pattern}'，请通过分析数据流来发现潜在的密码重置漏洞", file=sys.stderr)
+                            result = f"错误：禁止直接搜索关键词 '{pattern}'，请通过分析数据流来发现潜在的密码重置漏洞"
+                        else:
+                            result = self.call_tool(func_name, arguments)
                     # 执行工具
-                    result = self.call_tool(func_name, arguments)
+                    else:
+                        result = self.call_tool(func_name, arguments)
 
                     # 将工具结果添加到对话
                     tc_for_message = {
@@ -304,45 +368,28 @@ class PasswordResetAgent:
 
     def _parse_audit_result(self, submit_args: dict, messages: List[Dict]) -> AuditResult:
         """解析审计结果"""
-        summary = submit_args.get("summary", "")
+        # 处理 code_map
+        code_map_data = submit_args.get("code_map", [])
+        code_map = []
+        for cm in code_map_data:
+            code_map.append(CodeContext(
+                function_name=cm.get("function_name", ""),
+                file_path=cm.get("file_path", ""),
+                line_start=cm.get("line_start", 0),
+                line_end=cm.get("line_end", 0),
+                code_snippet=cm.get("code_snippet", ""),
+                is_entry_point=cm.get("is_entry_point", False),
+                taint_source=cm.get("taint_source"),
+                taint_path=cm.get("taint_path"),
+            ))
 
-        # 让 LLM 输出结构化的审计结果
-        messages.append({
-            "role": "user",
-            "content": """请输出结构化的审计结果（JSON格式）：
-{
-  "is_vulnerable": true/false,
-  "confidence": "high"/"medium"/"low",
-  "description": "漏洞描述",
-  "taint_flow": "污点流向描述",
-  "recommendation": "修复建议"
-}"""
-        })
-
-        response = self.llm_client.chat(
-            messages=messages,
-            temperature=0.1,
-            response_format={"type": "json_object"},
-        )
-
-        try:
-            from utils.llm_client import extract_json
-            json_str = extract_json(response.content)
-            if json_str:
-                data = json.loads(json_str)
-            else:
-                data = {}
-        except json.JSONDecodeError:
-            data = {}
-
-        print(f"\n[审计结果] {data}", file=sys.stderr)
-
+        print(f"\n[审计结果] is_vulnerable={submit_args.get('is_vulnerable')}, confidence={submit_args.get('confidence')}", file=sys.stderr)
         return AuditResult(
             vulnerability_type="password_reset",
-            is_vulnerable=data.get("is_vulnerable", False),
-            confidence=data.get("confidence", "low"),
-            description=data.get("description", summary),
-            taint_flow=data.get("taint_flow"),
-            recommendation=data.get("recommendation"),
-            code_map=self.code_map,
+            is_vulnerable=submit_args.get("is_vulnerable", False),
+            confidence=submit_args.get("confidence", "low"),
+            description=submit_args.get("description") or submit_args.get("summary", ""),
+            taint_flow=submit_args.get("taint_flow"),
+            recommendation=submit_args.get("recommendation"),
+            code_map=code_map,
         )

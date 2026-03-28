@@ -52,7 +52,7 @@ CivetWeb 是一个用 C 语言编写的嵌入式 Web 服务器。本文件描述
 
 ## 外部输入来源
 
-### 1. HTTP 请求参数
+### 1. HTTP 请求参数（C 和 C++ 通用）
 
 通过 `mg_get_var`、`mg_get_header` 等函数获取的用户输入：
 
@@ -66,6 +66,12 @@ const char *auth = mg_get_header(conn, "Authorization");
 // POST 数据
 char post_data[1024];
 mg_read(conn, post_data, sizeof(post_data));
+
+// Cookie
+const char *cookie = mg_get_cookie(conn, "session_id");
+
+// 表单变量
+int len = mg_get_form_var(conn, "field_name", buffer, sizeof(buffer));
 ```
 
 ### 2. URL 路径参数
@@ -76,6 +82,7 @@ URL 路径本身可能包含用户控制的输入：
 // 请求的 URI
 const char *uri = mg_get_request_info(conn)->request_uri;
 const char *method = mg_get_request_info(conn)->request_method;
+const char *query_string = mg_get_request_info(conn)->query_string;
 ```
 
 ### 3. 文件上传
@@ -90,7 +97,38 @@ mg_upload(conn, "/tmp");
 mg_read(conn, buffer, len);
 ```
 
-## C++ 特有的输入处理
+### 4. WebSocket 输入（C++）
+
+WebSocket 连接中的数据：
+
+```cpp
+// WebSocket 消息处理（在 CivetWeb 1.15+）
+class WebSocketHandler : public CivetWebSocketHandler {
+public:
+    // 处理 WebSocket 消息
+    bool handleMessage(CivetServer *server,
+                       const WebSocketConnection *ws_con,
+                       const char *data, size_t len) {
+        // data 和 len 是用户可控的输入
+        // ...
+    }
+
+    // 处理 WebSocket 连接
+    bool handleConnection(CivetServer *server,
+                          const WebSocketConnection *ws_con) {
+        // ws_con 包含连接信息
+        const char *uri = ws_con->request_uri;
+        // ...
+    }
+
+    // 处理 WebSocket 关闭
+    void handleClose(const WebSocketConnection *ws_con) {
+        // 清理资源
+    }
+};
+```
+
+### 5. C++ 特有的输入处理
 
 在 C++ 实现中，CivetServer 通常通过继承和重写方法来处理请求：
 
@@ -100,9 +138,75 @@ public:
     bool handleGet(CivetServer *server, struct mg_connection *conn) {
         // 处理 GET 请求
         const char *uri = mg_get_request_info(conn)->request_uri;
+        const char *query = mg_get_request_info(conn)->query_string;
+        const char *param = mg_get_var(conn, "param");
+        // ...
+    }
+
+    bool handlePost(CivetServer *server, struct mg_connection *conn) {
+        // 处理 POST 请求
+        char post_data[4096];
+        int len = mg_read(conn, post_data, sizeof(post_data) - 1);
+        post_data[len] = '\0';
+        // ...
+    }
+
+    bool handleCivetHeader(CivetServer *server, struct mg_connection *conn,
+                           const char *header, const char *value) {
+        // 自定义头部处理，header 和 value 是用户可控的
+        // ...
+    }
+
+    bool handleCivetVar(CivetServer *server, struct mg_connection *conn,
+                        const char *var, const char *value) {
+        // 模板变量处理，var 和 value 是用户可控的
         // ...
     }
 };
+```
+
+### 6. JSON 请求体（C++）
+
+```cpp
+bool handlePost(CivetServer *server, struct mg_connection *conn) {
+    // 读取整个请求体
+    std::string body;
+    char buf[4096];
+    while (int len = mg_read(conn, buf, sizeof(buf) - 1)) {
+        buf[len] = '\0';
+        body += buf;
+    }
+
+    // 解析 JSON（需要外部库如 rapidjson 或 nlohmann/json）
+    auto json = nlohmann::json::parse(body);  // body 完全用户可控
+    // ...
+}
+```
+
+### 7. multipart/form-data 文件上传（C++）
+
+```cpp
+bool handlePost(CivetServer *server, struct mg_connection *conn) {
+    struct mg_form_data_handler fdh = {
+        .field_found = [](struct mg_connection *conn, void *data,
+                         const char *fieldname, const char *filename,
+                         char *path, size_t pathlen) -> int {
+            // fieldname, filename 完全用户可控
+            // ...
+            return 0;
+        },
+        .field_get = [](struct mg_connection *conn, void *data,
+                       const char *name, const char *value,
+                       size_t len) -> int {
+            // name 和 value 完全用户可控
+            // ...
+            return 0;
+        },
+    };
+
+    mg_handle_form_request(conn, &fdh);
+    return true;
+}
 ```
 
 ## 常见污染路径
@@ -130,13 +234,31 @@ sprintf(path, "/var/www/html/%s", file);
 FILE *f = fopen(path, "r");  // 路径遍历
 ```
 
+### 路径 4: WebSocket 数据 -> 命令执行（C++）
+```cpp
+bool handleMessage(CivetServer *server, const WebSocketConnection *ws_con,
+                   const char *data, size_t len) {
+    // data 完全用户可控
+    system(data);  // 命令注入
+}
+```
+
+### 路径 5: JSON body -> 命令注入（C++）
+```cpp
+auto json = nlohmann::json::parse(body);
+std::string cmd = json["cmd"];  // 完全用户可控
+system(cmd.c_str());
+```
+
 ## 需要审计的函数模式
 
-1. **直接用户输入使用**：`mg_get_var`, `mg_read`, `mg_get_header`
-2. **字符串拼接**：`sprintf`, `strcat`, `strcpy`
-3. **危险函数调用**：`system`, `exec*`, `popen`, `fopen`
+1. **直接用户输入使用**：`mg_get_var`, `mg_read`, `mg_get_header`, `mg_get_cookie`, `mg_get_form_var`
+2. **字符串拼接**：`sprintf`, `strcat`, `strcpy`, `std::string +=`
+3. **危险函数调用**：`system`, `exec*`, `popen`, `fopen`, `open`
 4. **SQL 查询构造**：包含 SQL 关键字的字符串格式化
 5. **C++ 中的请求处理**：`handleGet`, `handlePost`, `handlePut`, `handleDelete` 等
+6. **WebSocket 处理**：`handleMessage` 中的 data 和 len 参数
+7. **JSON 解析**：解析用户提供的 JSON 数据
 
 ## 示例输入点
 
@@ -144,9 +266,12 @@ FILE *f = fopen(path, "r");  // 路径遍历
 |-----------|----------|----------|
 | mg_get_var(conn, "*") | GET/POST 参数 | 高 |
 | mg_get_header(conn, "*") | HTTP 头 | 中 |
+| mg_get_cookie(conn, "*") | Cookie | 中 |
 | mg_read(conn, buf, len) | 请求体 | 高 |
 | mg_get_request_info(conn) | URI/Method | 中 |
 | handleGet/handlePost | HTTP 请求 | 高 |
+| handleMessage(data, len) | WebSocket 数据 | 高 |
+| JSON 解析后 | JSON body | 高 |
 """
 
 # mg_set_request_handler 的正则表达式

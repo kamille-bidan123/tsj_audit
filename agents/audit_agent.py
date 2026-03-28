@@ -9,6 +9,7 @@ AuditAgent - 审计调度 Agent
 
 import sys
 from typing import List, Optional
+import traceback
 
 from models import FunctionInfo, CodeContext, AuditResult, ExploitResult
 
@@ -38,6 +39,10 @@ class AuditAgent:
             "agent_module": "agents.password_reset_agent",
             "agent_class": "PasswordResetAgent",
         },
+        "loop": {
+            "agent_module": "agents.loop_vulnerability_agent",
+            "agent_class": "LoopVulnerabilityAgent",
+        },
     }
 
     def __init__(
@@ -58,7 +63,7 @@ class AuditAgent:
 
     def audit(self) -> tuple[List[AuditResult], List[ExploitResult]]:
         """
-        执行所有类型的审计
+        执行审计，根据 function_info.audit_types 选择要审计的类型
 
         Returns:
             (List[AuditResult], List[ExploitResult]) 所有审计结果和利用结果
@@ -66,8 +71,19 @@ class AuditAgent:
         all_audit_results = []
         all_exploit_results = []
 
-        # 遍历所有审计类型
-        for audit_type in self.AUDIT_TYPES:
+        # 根据 audit_types 确定要审计的类型
+        if self.function_info.audit_types:
+            # 使用指定的审计类型
+            audit_types_to_run = [
+                at for at in self.function_info.audit_types
+                if at in self.AUDIT_TYPES
+            ]
+        else:
+            # 如果没有指定，默认审计所有类型
+            audit_types_to_run = list(self.AUDIT_TYPES.keys())
+
+        # 遍历要审计的类型
+        for audit_type in audit_types_to_run:
             print(f"\n[AuditAgent] 开始 {audit_type} 审计", file=sys.stderr)
 
             audit_result = self._run_single_audit(audit_type)
@@ -123,6 +139,7 @@ class AuditAgent:
 
         except Exception as e:
             if self.debug:
+                print(f'{traceback.format_exc()}', file=sys.stderr)
                 print(f"[AuditAgent] 审计失败: {e}", file=sys.stderr)
             return None
 

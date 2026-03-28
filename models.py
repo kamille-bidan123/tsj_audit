@@ -20,6 +20,8 @@ class FunctionInfo(BaseModel):
     # 外部输入点标识（如 "mg_get_var", "mg_websocket_accept" 等）
     # 本质是知识文档的引用，标识这个函数的外部输入来源
     input: str
+    # 审计类型列表，指定该接口需要审计哪些漏洞类型
+    audit_types: Optional[List[str]] = None
 
 
 class CodeContext(BaseModel):

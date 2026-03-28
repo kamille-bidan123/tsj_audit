@@ -171,8 +171,9 @@ class FileTool:
 
         # 优先尝试 rg (ripgrep)
         try:
+            # exclude tags文件
             result = subprocess.run(
-                ["rg", "--ignore-case", "--color=never", "--line-number", pattern],
+                ["rg", "--glob", "!tags", "--ignore-case", "--color=never", "--line-number", pattern],
                 capture_output=True,
                 timeout=30,
                 close_fds=True,
@@ -188,7 +189,7 @@ class FileTool:
         # 回退到 grep
         try:
             result = subprocess.run(
-                ["grep", "-rni", "--color=never", pattern],
+                ["grep", "--exclude=tags", "-rni", "--color=never", pattern],
                 capture_output=True,
                 timeout=30,
                 close_fds=True,
