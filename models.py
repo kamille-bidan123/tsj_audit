@@ -6,6 +6,8 @@
 定义 scan 和 trace 共用的 Pydantic 模型
 """
 
+from __future__ import annotations
+
 from typing import Optional, List
 from pydantic import BaseModel
 

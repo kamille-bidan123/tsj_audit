@@ -18,6 +18,12 @@ from tools.executor import ToolExecutor
 from models import CodeContext, AuditResult, FunctionInfo
 from utils.llm_client import LLMClient
 from cli import get_config_object
+# 导入提示词
+from agents.prompt import (
+    COMMAND_INJECT_DANGEROUS_FUNCTIONS,
+    build_command_inject_system_prompt,
+    build_command_inject_user_message,
+)
 
 
 class CommandInjectSubmitTool:
@@ -103,11 +109,8 @@ class CommandInjectAgent:
         "submit_command_inject",
     ]
 
-    # 危险函数列表
-    DANGEROUS_FUNCTIONS = [
-        "system", "popen", "execve", "execl", "execlp", "execle", "execv", "execvp", "execvpe",
-        "spawn", "spawnl", "spawnle", "spawnlp", "spawnlpe", "spawnv", "spawnve", "spawnvp", "spawnvpe",
-    ]
+    # 危险函数列表（从 prompt 导入）
+    DANGEROUS_FUNCTIONS = COMMAND_INJECT_DANGEROUS_FUNCTIONS
 
     def __init__(
         self,
@@ -149,50 +152,10 @@ class CommandInjectAgent:
 
     def _build_system_prompt(self) -> str:
         """构建系统提示"""
-
-        return f"""你是一个代码安全审计专家，专门进行命令注入漏洞审计。
-
-## 任务
-从接口函数 {self.function_info.func_name} 开始
-基于提供的 codemap，深入分析代码中是否存在命令注入漏洞。
-
-## 危险函数
-命令注入相关的危险函数包括：
-{', '.join(self.DANGEROUS_FUNCTIONS)}
-
-## 审计要点
-1. 检查外部输入是否直接或间接传递给危险函数
-2. 分析数据流：外部输入 -> 中间变量 -> 危险函数
-3. 检查是否有有效的输入验证/过滤
-4. 评估漏洞的可利用性
-
-## 工具使用
-你可以使用提供的工具来探索代码。每次调用一个工具，根据结果决定下一步行动。
-工具的详细说明（包括参数和使用场景）已在工具 schema 中定义，请参考工具描述。
-
-## 输出格式
-当你认为已经审计完成时，调用 submit_command_inject 工具提交审计结果。
-
-强制要求：
-- 你应该只关注上面提供的接口函数{self.function_info.func_name}相关的数据流和代码路径，不要偏离主题去分析其他无关的代码。
-- 你应该只关注上面提供的接口函数{self.function_info.func_name}相关的数据流和代码路径，不要偏离主题去分析其他无关的代码。
-- 你应该只关注上面提供的接口函数{self.function_info.func_name}相关的数据流和代码路径，不要偏离主题去分析其他无关的代码。
-重要的事情说三遍
-- 禁止直接搜索危险函数的名字，应该通过分析数据流来发现潜在的命令注入漏洞
-- 禁止全局扫描危险函数调用
-- 禁止在与接口函数无关的代码中分析命令注入漏洞
-
-分析前检查：
-- 确认要分析的函数数据流与接口函数相关
-- 确认数据流相关的具体原因，是参数传递、全局变量、还是其他方式
-- 如果不能确认数据流与接口函数相关，则不应该调用工具获取与接口函数无关的代码信息
-
-
-【为什么】
-- 直接搜索危险函数会产生大量误报
-- 只有从指定入口追踪的数据流才是有效审计路径
-- 违反此规则的分析结果将被视为无效
-"""
+        return build_command_inject_system_prompt(
+            self.function_info.func_name,
+            self.DANGEROUS_FUNCTIONS
+        )
 
     def _build_user_message(self) -> str:
         """构建用户消息，包含 codemap"""
@@ -201,16 +164,7 @@ class CommandInjectAgent:
             indent=2,
             ensure_ascii=False
         )
-
-        return f"""请基于以下 codemap 进行命令注入漏洞审计：
-
-```json
-{code_map_str}
-```
-
-请使用工具调用来深入分析代码，确认是否存在命令注入漏洞。
-当你认为已经审计完成时，调用 submit_command_inject 工具提交审计结果。
-"""
+        return build_command_inject_user_message(code_map_str)
 
     def audit(self) -> AuditResult:
         """

@@ -60,12 +60,16 @@ def run_trace_agent(config):
             print("错误：--resume 模式需要指定 --output-dir")
             sys.exit(1)
 
+        # 保存命令行指定的 resume 参数
+        resume_flag = config.resume
+
         # 加载保存的配置
         saved_config = load_saved_config(config.output_dir)
         if saved_config:
             print(f"[恢复模式] 使用已保存的配置: {config.output_dir}")
-            # 使用保存的配置，忽略命令行和.env的值
+            # 使用保存的配置，忽略 resume 字段（由命令行决定）
             config = saved_config
+            config.resume = resume_flag
         else:
             print(f"[警告]Resume 模式未找到保存的配置，使用当前配置继续")
     else:
@@ -107,10 +111,6 @@ def main():
         for key, value in dict(config).items():
             print(f"  {key}: {value}")
         print()
-
-    # 4. 运行 TraceAgent
     run_trace_agent(config)
-
-
 if __name__ == "__main__":
     main()

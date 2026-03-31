@@ -52,14 +52,21 @@ class AuditAgent:
         project_path: str = ".",
         debug: bool = False,
         output_dir: str = None,
+        on_log: callable = None,
     ):
         self.function_info = function_info
         self.code_map = code_map
         self.project_path = project_path
         self.debug = debug
         self.output_dir = output_dir
+        self.on_log = on_log or (lambda x: None)
         from config import get_config
         self.disable_exploit = get_config().disable_exploit
+
+    def _log(self, message: str) -> None:
+        """输出日志到 stderr 和 TUI"""
+        print(message, file=sys.stderr)
+        self.on_log(message)
 
     def audit(self) -> tuple[List[AuditResult], List[ExploitResult]]:
         """
@@ -84,7 +91,7 @@ class AuditAgent:
 
         # 遍历要审计的类型
         for audit_type in audit_types_to_run:
-            print(f"\n[AuditAgent] 开始 {audit_type} 审计", file=sys.stderr)
+            self._log(f"[AuditAgent] 开始 {audit_type} 审计")
 
             audit_result = self._run_single_audit(audit_type)
 
@@ -93,27 +100,26 @@ class AuditAgent:
 
                 # 如果发现漏洞且置信度较高，调用 exploit agent
                 if audit_result.is_vulnerable and audit_result.confidence in ("high", "medium"):
-                    print(f"\n[AuditAgent] 发现 {audit_type} 漏洞，启动 ExploitAgent", file=sys.stderr)
+                    self._log(f"[AuditAgent] 发现 {audit_type} 漏洞，启动 ExploitAgent")
 
                     if self.disable_exploit:
-                        print(f"  [Exploit] 已禁用 exploit", file=sys.stderr)
+                        self._log(f"  [Exploit] 已禁用 exploit")
                         exploit_result = None
                     else:
                         exploit_result = self._run_exploit_agent(audit_result)
 
                         if exploit_result:
-                            print(f"  [Exploit] 成功: {exploit_result.success}", file=sys.stderr)
+                            self._log(f"  [Exploit] 成功: {exploit_result.success}")
                             all_exploit_results.append(exploit_result)
                         else:
-                            print(f"  [Exploit] 失败: 无法生成利用", file=sys.stderr)
+                            self._log(f"  [Exploit] 失败: 无法生成利用")
 
         return all_audit_results, all_exploit_results
 
     def _run_single_audit(self, audit_type: str) -> Optional[AuditResult]:
         """运行具体的审计 agent"""
         if audit_type not in self.AUDIT_TYPES:
-            if self.debug:
-                print(f"[AuditAgent] 未知的审计类型: {audit_type}", file=sys.stderr)
+            self._log(f"[AuditAgent] 未知的审计类型: {audit_type}")
             return None
 
         config = self.AUDIT_TYPES[audit_type]
@@ -132,15 +138,12 @@ class AuditAgent:
                 output_dir=self.output_dir,
             )
 
-            if self.debug:
-                print(f"\n[AuditAgent] 启动 {config['agent_class']}", file=sys.stderr)
+            self._log(f"[AuditAgent] 启动 {config['agent_class']}")
 
             return agent.audit()
 
         except Exception as e:
-            if self.debug:
-                print(f'{traceback.format_exc()}', file=sys.stderr)
-                print(f"[AuditAgent] 审计失败: {e}", file=sys.stderr)
+            self._log(f"[AuditAgent] 审计失败: {e}")
             return None
 
     def _run_exploit_agent(self, audit_result: AuditResult) -> Optional[ExploitResult]:
@@ -160,6 +163,5 @@ class AuditAgent:
             return agent.exploit()
 
         except Exception as e:
-            if self.debug:
-                print(f"[AuditAgent] Exploit 失败: {e}", file=sys.stderr)
+            self._log(f"[AuditAgent] Exploit 失败: {e}")
             return None

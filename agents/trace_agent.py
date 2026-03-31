@@ -21,6 +21,8 @@ import utils.export_utils
 # 导入共享模型
 from models import FunctionInfo, CodeContext, TraceResult, AuditResult
 from utils.export_utils import merge_checkpoints_and_export
+# 导入提示词
+from agents.prompt import EXPLORATION_SYSTEM_PROMPT, build_exploration_user_message
 
 
 class SubmitTool:
@@ -80,14 +82,28 @@ class TraceAgent:
         project_path: str = ".",
         debug: bool = False,
         output_dir: str = None,
+        # TUI 回调
+        on_function_start: callable = None,
+        on_function_complete: callable = None,
+        on_log: callable = None,
     ):
         self.project_path = project_path
         self.debug = debug
         self.output_dir = output_dir
 
+        # TUI 回调
+        self.on_function_start = on_function_start or (lambda x: None)
+        self.on_function_complete = on_function_complete or (lambda x: None)
+        self.on_log = on_log or (lambda x: None)
+
         self._llm_client = None
         self._input_knowledge: Optional[str] = None
         self._scan_results: Optional[List[FunctionInfo]] = None
+
+    def _log(self, message: str) -> None:
+        """输出日志到 stderr 和 TUI"""
+        print(message, file=sys.stderr)
+        self.on_log(message)
 
     def _get_checkpoint_dir(self, output_dir: str) -> Path:
         """获取中间信息保存目录"""
@@ -273,51 +289,11 @@ class TraceAgent:
 
     def _build_exploration_system_prompt(self) -> str:
         """构建探索阶段系统提示"""
-
-        return f"""你是一个代码安全审计专家，专门进行污点分析 (taint analysis)。
-
-## 任务
-你的任务是从接口函数开始，探索代码中的外部输入污染路径。
-
-
-## 审计目标
-1. 识别外部输入点 (mg_get_var, mg_read, mg_get_header 等)
-2. 追踪数据如何传递给其他函数
-3. 识别危险函数 (system, sprintf, strcpy, fopen 等)
-4. 构建完整的污染调用链
-
-## 工具使用
-你可以使用提供的工具来探索代码。每次调用一个工具，根据结果决定下一步行动。
-工具的详细说明（包括参数和使用场景）已在工具 schema 中定义，请参考工具描述。
-
-## Output Format (Output Format)
-当你认为已经探索完成时，调用 submit 工具提交你的发现总结。
-"""
+        return EXPLORATION_SYSTEM_PROMPT
 
     def _build_exploration_user_message(self, func_info: FunctionInfo) -> str:
         """构建探索阶段用户消息"""
-        return f"""请从以下接口函数开始探索：
-
-函数名：{func_info.func_name}
-文件：{func_info.file_path}
-行号：{func_info.start_line}-{func_info.end_line}
-
-代码片段:
-{func_info.code_snippet}
-
-## 外部输入知识
-{func_info.input}
-
-请使用工具调用来探索这个函数是否存在外部输入污染，追踪所有被污染的数据流。
-当你认为已经探索完成时，调用 submit 工具提交你的发现总结。
-强制要求：
-你应该只关注上面提供的接口函数相关的数据流和代码路径，不要偏离主题去分析其他无关的代码。
-你应该只关注上面提供的接口函数相关的数据流和代码路径，不要偏离主题去分析其他无关的代码。
-你应该只关注上面提供的接口函数相关的数据流和代码路径，不要偏离主题去分析其他无关的代码。
-重要的事情说三遍
-
-
-"""
+        return build_exploration_user_message(func_info)
 
     def audit_function(
         self,
@@ -342,13 +318,11 @@ class TraceAgent:
             {"role": "user", "content": user_message},
         ]
 
-        if self.debug:
-            print(f"\n[探索阶段] 开始分析：{func_info.func_name}", file=sys.stderr)
+        self._log(f"[探索阶段] 开始分析：{func_info.func_name}")
 
         max_turns = get_config_object().max_turns
         for turn in range(max_turns):
-            if self.debug:
-                print(f"\n[第{turn+1}轮]", file=sys.stderr)
+            self._log(f"[第{turn+1}轮]")
 
             # 调用 LLM with tools
             # if self.debug:
@@ -365,14 +339,13 @@ class TraceAgent:
             # 检查是否有工具调用
             if response.tool_calls:
                 for tc in response.tool_calls:
-                    print(f"\n[工具调用] {tc['function']['name']}({tc['function']['arguments']})", file=sys.stderr)
+                    self._log(f"[工具调用] {tc['function']['name']}({tc['function']['arguments']})")
                     func_name = tc["function"]["name"]
                     arguments = tc["function"]["arguments"]
 
                     # 检查是否是 submit 调用
                     if func_name == "submit":
-                        if self.debug:
-                            print("[提交探索]", file=sys.stderr)
+                        self._log("[提交探索]")
                         # 进入 codemap 生成阶段
                         return self._generate_codemap(func_info, messages)
 
@@ -400,7 +373,7 @@ class TraceAgent:
                         "content": result,
                     })
             else:
-                print("在tool_choice=required模式下，未检测到工具调用", file=sys.stderr)
+                self._log("在tool_choice=required模式下，未检测到工具调用")
                 messages.append({
                     "role": "user",
                     "content": "请使用工具进行探索，或调用 submit 工具结束探索。"
@@ -503,14 +476,14 @@ class TraceAgent:
             project_path=self.project_path,
             debug=self.debug,
             output_dir=self.output_dir,
+            on_log=self.on_log,
         )
 
         audit_results, exploit_results = audit_agent.audit()
 
-        if self.debug:
-            print(f"  [审计结果] 总计发现 {len(audit_results)} 个潜在漏洞", file=sys.stderr)
-            for ar in audit_results:
-                print(f"    - {ar.vulnerability_type}: {ar.is_vulnerable} (置信度: {ar.confidence})", file=sys.stderr)
+        self._log(f"[审计结果] 总计发现 {len(audit_results)} 个潜在漏洞")
+        for ar in audit_results:
+            self._log(f"  - {ar.vulnerability_type}: {ar.is_vulnerable} (置信度: {ar.confidence})")
 
         # 保存 trace agent 的对话历史
         self._save_conversation_history("trace_agent", func_info, messages)
@@ -555,11 +528,15 @@ class TraceAgent:
         # 如果启用了resume模式，加载已有的检查点
         checkpoints = {}
         completed_funcs = set()
+        print(f"[DEBUG] resume={resume}, output_dir={output_dir}", file=sys.stderr)
         if resume and output_dir:
+            print(f"[DEBUG] 正在加载检查点...", file=sys.stderr)
             checkpoints = self._load_all_checkpoints(output_dir)
             completed_funcs = set(checkpoints.keys())
-            if self.debug and completed_funcs:
+            print(f"[DEBUG] 加载了 {len(checkpoints)} 个检查点", file=sys.stderr)
+            if completed_funcs:
                 print(f"\n[TraceAgent] 从检查点恢复: 找到 {len(completed_funcs)} 个已完成的函数", file=sys.stderr)
+                print(f"[TraceAgent] 已完成的函数列表: {list(completed_funcs)}", file=sys.stderr)
 
         # 逐个审计
         for func_info in scan_results:
@@ -578,7 +555,13 @@ class TraceAgent:
                     f"[TraceAgent] 审计函数：{func_name} @ {func_info.file_path}:{func_info.start_line}", file=sys.stderr)
                 print(f"{'='*60}", file=sys.stderr)
 
+            # 通知开始审计
+            self.on_function_start(func_info)
+
             result = self.audit_function(func_info)
+
+            # 通知完成审计
+            self.on_function_complete(func_info)
 
             # 保存检查点
             if output_dir:
