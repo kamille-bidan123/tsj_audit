@@ -6,54 +6,15 @@ Trace Agent - 代码污点追踪审计 Agent
 探索阶段：多轮对话，使用工具探索代码，最后输出 codemap
 """
 
-import os
 import sys
 import json
 import importlib.util
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional
 from pathlib import Path
 from datetime import datetime
-from tools.registry import ToolRegistry
-from tools.executor import ToolExecutor
-from cli import get_config_object
-import glob
-import utils.export_utils
 # 导入共享模型
 from models import FunctionInfo, CodeContext, TraceResult, AuditResult
 from utils.export_utils import merge_checkpoints_and_export
-# 导入提示词
-from agents.prompt import EXPLORATION_SYSTEM_PROMPT, build_exploration_user_message
-
-
-class SubmitTool:
-    """提交探索结果的工具"""
-
-    name = "submit"
-    description = "探索工具"
-
-    commands = {
-        "submit": {
-            "description": "探索完成，提交探索结果",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "summary": {
-                        "type": "string",
-                        "description": "探索发现的总结",
-                    },
-                },
-                "required": ["summary"],
-            },
-        },
-    }
-
-    def execute(self, command: str, args: dict) -> str:
-        return "已提交"
-
-
-# 注册 submit 工具
-ToolRegistry._commands["submit"] = SubmitTool
-ToolRegistry._tools["submit"] = SubmitTool
 
 
 class TraceAgent:
@@ -63,19 +24,6 @@ class TraceAgent:
     探索阶段：多轮对话 + 工具调用探索代码，最后输出 codemap
     审计阶段：基于 codemap 调用 sub-agent 进行漏洞审计
     """
-
-    # 探索阶段使用的工具
-    EXPLORATION_TOOLS = [
-        "read_file", "list_dir", "search_code",
-        "go_to_def", "find_refs",
-        "skill",  # Skills 工具
-        "submit",
-    ]
-
-    # 审计阶段使用的工具（sub-agent 调用）
-    AUDIT_TOOLS = [
-        "submit",
-    ]
 
     def __init__(
         self,
@@ -96,7 +44,6 @@ class TraceAgent:
         self.on_function_complete = on_function_complete or (lambda x: None)
         self.on_log = on_log or (lambda x: None)
 
-        self._llm_client = None
         self._input_knowledge: Optional[str] = None
         self._scan_results: Optional[List[FunctionInfo]] = None
 
@@ -209,15 +156,6 @@ class TraceAgent:
 
         return checkpoints
 
-    @property
-    def llm_client(self):
-        """懒加载 LLM 客户端"""
-        if self._llm_client is None:
-            from utils.llm_client import LLMClient
-            self._llm_client = LLMClient()
-        return self._llm_client
-
-
     def load_scan_results(self, scan_path: str, code_path: Optional[str] = None) -> List[FunctionInfo]:
         """加载 JSON 文件扫描结果"""
         if code_path is None:
@@ -280,21 +218,6 @@ class TraceAgent:
         self._scan_results = results
         return results
 
-    def call_tool(self, name: str, arguments: Dict[str, Any]) -> str:
-        """调用工具执行"""
-        result = ToolExecutor.call(name, arguments)
-        if self.debug:
-            print(f"  [Tool] {name}({arguments}) -> {result[:100]}...", file=sys.stderr)
-        return result
-
-    def _build_exploration_system_prompt(self) -> str:
-        """构建探索阶段系统提示"""
-        return EXPLORATION_SYSTEM_PROMPT
-
-    def _build_exploration_user_message(self, func_info: FunctionInfo) -> str:
-        """构建探索阶段用户消息"""
-        return build_exploration_user_message(func_info)
-
     def audit_function(
         self,
         func_info: FunctionInfo,
@@ -309,161 +232,16 @@ class TraceAgent:
         Returns:
             TraceResult 追踪结果
         """
-        # 构建消息
-        system_prompt = self._build_exploration_system_prompt()
-        user_message = self._build_exploration_user_message(func_info)
+        from agents.trace_workflow import TraceWorkflow
 
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_message},
-        ]
+        return TraceWorkflow(self).run(func_info)
 
-        self._log(f"[探索阶段] 开始分析：{func_info.func_name}")
-
-        max_turns = get_config_object().max_turns
-        for turn in range(max_turns):
-            self._log(f"[第{turn+1}轮]")
-
-            # 调用 LLM with tools
-            # if self.debug:
-            #     import json
-            #     print(f"\n[DEBUG] messages: {json.dumps(messages[-2:] if len(messages) > 2 else messages, ensure_ascii=False, indent=2)}", file=sys.stderr)
-
-            response = self.llm_client.chat(
-                messages=messages,
-                tools=ToolRegistry.to_openai_tools(self.EXPLORATION_TOOLS),
-                tool_choice="required",  # 强制必须调用工具
-                temperature=0.1,
-            )
-
-            # 检查是否有工具调用
-            if response.tool_calls:
-                for tc in response.tool_calls:
-                    self._log(f"[工具调用] {tc['function']['name']}({tc['function']['arguments']})")
-                    func_name = tc["function"]["name"]
-                    arguments = tc["function"]["arguments"]
-
-                    # 检查是否是 submit 调用
-                    if func_name == "submit":
-                        self._log("[提交探索]")
-                        # 进入 codemap 生成阶段
-                        return self._generate_codemap(func_info, messages)
-
-                    # 执行工具
-                    result = self.call_tool(func_name, arguments)
-
-                    # 将工具结果添加到对话
-                    # 注意：arguments 需要转回 JSON 字符串
-                    tc_for_message = {
-                        "id": tc["id"],
-                        "type": tc["type"],
-                        "function": {
-                            "name": tc["function"]["name"],
-                            "arguments": json.dumps(tc["function"]["arguments"], ensure_ascii=False),
-                        }
-                    }
-                    messages.append({
-                        "role": "assistant",
-                        "content": "",
-                        "tool_calls": [tc_for_message],
-                    })
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tc["id"],
-                        "content": result,
-                    })
-            else:
-                self._log("在tool_choice=required模式下，未检测到工具调用")
-                messages.append({
-                    "role": "user",
-                    "content": "请使用工具进行探索，或调用 submit 工具结束探索。"
-                })
-
-        # 达到最大轮数，生成 codemap
-        return self._generate_codemap(func_info, messages)
-
-    def _generate_codemap(
+    def _audit_codemap(
         self,
         func_info: FunctionInfo,
-        messages: List[Dict],
-    ) -> TraceResult:
-        """生成 codemap"""
-        if self.debug:
-            print("\n[输出阶段] 生成 codemap...", file=sys.stderr)
-
-        # 添加 codemap 生成请求
-        messages.append({
-            "role": "user",
-            "content": f"""请根据以上探索信息，生成完整的 codemap，包含所有被污染的函数调用链，并描述函数的主要业务逻辑。
-
-入口函数：{func_info.func_name}
-文件：{func_info.file_path}:{func_info.start_line}-{func_info.end_line}
-
-输出格式要求（JSON对象）：
-{{
-  "code_logic": "函数的业务逻辑描述",
-  "code_map": [
-    {{
-      "function_name": "函数名",
-      "file_path": "文件路径",
-      "line_start": 起始行号,
-      "line_end": 结束行号,
-      "code_snippet": "代码片段",
-      "is_entry_point": true/false,
-      "taint_source": "污染源（可选）",
-      "taint_path": "污染路径（可选）"
-    }}
-  ]
-}}
-"""
-        })
-
-        # 使用 JSON 输出格式
-        response = self.llm_client.chat(
-            messages=messages,
-            temperature=0.1,
-            response_format={"type": "json_object"},
-        )
-
-        # 解析 codemap
-        try:
-            # 使用 extract_json 提取 JSON（处理 markdown 代码块）
-            from utils.llm_client import extract_json
-            json_str = extract_json(response.content)
-            if not json_str:
-                # 尝试重试一次，强制要求只输出 JSON
-                print("[重试] 强制要求 JSON 输出...", file=sys.stderr)
-                messages.append({
-                    "role": "user",
-                    "content": "请只输出 JSON 格式的 codemap，不要输出任何其他文字。直接输出 JSON 对象："
-                })
-                response = self.llm_client.chat(
-                    messages=messages,
-                    temperature=0.1,
-                    response_format={"type": "json_object"},
-                )
-                json_str = extract_json(response.content)
-
-            if not json_str:
-                raise ValueError("未找到有效的 JSON 内容")
-            data = json.loads(json_str)
-            code_logic = data.get("code_logic", "")
-            items = data.get("code_map", [])
-            code_map = [CodeContext.model_validate(item) for item in items]
-        except (json.JSONDecodeError, Exception) as e:
-            if self.debug:
-                print(f"[警告] codemap 解析失败：{e}", file=sys.stderr)
-                if response.content:
-                    print(f"[响应内容] {response.content[:200]}...", file=sys.stderr)
-            code_map = []
-            code_logic = ""
-
-        # 将 codemap 响应添加到消息
-        messages.append({
-            "role": "assistant",
-            "content": response.content,
-        })
-
+        code_map: List[CodeContext],
+    ) -> tuple[List[AuditResult], list]:
+        """基于 codemap 调用漏洞审计阶段。"""
         # 直接进入审计阶段，不需要额外的消息
         if self.debug:
             print(f"\n[审计阶段] 启动 AuditAgent 运行所有审计类型", file=sys.stderr)
@@ -485,16 +263,7 @@ class TraceAgent:
         for ar in audit_results:
             self._log(f"  - {ar.vulnerability_type}: {ar.is_vulnerable} (置信度: {ar.confidence})")
 
-        # 保存 trace agent 的对话历史
-        self._save_conversation_history("trace_agent", func_info, messages)
-
-        return TraceResult(
-            function_info=func_info,
-            code_logic=code_logic,
-            code_map=code_map,
-            audit_results=audit_results,
-            exploit_results=exploit_results,
-        )
+        return audit_results, exploit_results
 
     def audit_all(
         self,
@@ -585,5 +354,3 @@ class TraceAgent:
             TraceResult 追踪结果
         """
         return self.audit_function(func_info)
-
-

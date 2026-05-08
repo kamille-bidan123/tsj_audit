@@ -135,6 +135,28 @@ def parse_args() -> argparse.Namespace:
         help="审计报告输出目录",
     )
 
+    audit_group.add_argument(
+        "--exploit-backend",
+        type=str,
+        choices=["opensandbox", "filesystem"],
+        default=None,
+        help="Exploit 执行后端（默认从配置读取）",
+    )
+
+    audit_group.add_argument(
+        "--target-base-url",
+        type=str,
+        default=None,
+        help="PoC 远程 URL 目标（默认从配置读取）",
+    )
+
+    audit_group.add_argument(
+        "--opensandbox-image",
+        type=str,
+        default=None,
+        help="OpenSandbox 容器镜像（默认从配置读取）",
+    )
+
     args = parser.parse_args()
 
     # 将命令行参数应用到配置

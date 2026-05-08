@@ -39,6 +39,14 @@ class Config(BaseSettings):
         default="claude-sonnet-4-6",
         description="模型名称"
     )
+    deepseek_thinking: str = Field(
+        default="disabled",
+        description="DeepSeek V4 thinking 模式：disabled 或 enabled"
+    )
+    deepseek_reasoning_effort: str = Field(
+        default="",
+        description="DeepSeek thinking 模式推理强度，例如 high 或 max；disabled 时留空"
+    )
 
     # 功能开关
     enable_lsp: bool = Field(
@@ -72,11 +80,53 @@ class Config(BaseSettings):
     )
     max_turns: int = Field(
         default=50,
-        description="审计最大轮数"
+        description="DeepAgents 基础轮次预算；LangGraph 执行步数上限会结合 max_tool_calls 自动换算"
+    )
+    max_tool_calls: int = Field(
+        default=120,
+        description="单个 DeepAgents runner 允许的最大工具调用次数"
+    )
+    max_repeated_tool_calls: int = Field(
+        default=2,
+        description="同一个工具同一参数允许重复调用的最大次数"
     )
     output_dir: str = Field(
         default="output",
         description="审计报告输出目录"
+    )
+
+    # Exploit sandbox 配置
+    exploit_backend: str = Field(
+        default="opensandbox",
+        description="Exploit 执行后端：opensandbox 或 filesystem"
+    )
+    target_base_url: str = Field(
+        default="http://localhost:8081",
+        description="PoC 远程 URL 目标；localhost 仅在 sandbox 内服务可达时有效"
+    )
+    opensandbox_image: str = Field(
+        default="gcc:latest",
+        description="OpenSandbox 使用的容器镜像"
+    )
+    opensandbox_project_dir: str = Field(
+        default="/workspace/project",
+        description="审计项目上传到 sandbox 内的目录"
+    )
+    opensandbox_timeout_seconds: int = Field(
+        default=600,
+        description="OpenSandbox 生命周期超时时间（秒）"
+    )
+    opensandbox_ready_timeout_seconds: int = Field(
+        default=120,
+        description="OpenSandbox 就绪等待时间（秒）"
+    )
+    opensandbox_upload_max_file_mb: int = Field(
+        default=5,
+        description="上传到 OpenSandbox 的单文件大小上限（MB）"
+    )
+    opensandbox_upload_excludes: str = Field(
+        default=".git,.venv,__pycache__,output,audit_output,test_export_dir,.env,.env.local,.env.glm,.env.iflow",
+        description="上传到 OpenSandbox 时排除的路径片段，逗号分隔"
     )
 
     # Skills 配置

@@ -11,7 +11,6 @@ import json
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from cli import parse_args, get_global_config, set_global_config
-from tools.executor import ToolExecutor
 from config import Config
 
 

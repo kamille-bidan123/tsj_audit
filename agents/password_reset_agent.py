@@ -1,129 +1,35 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-PasswordResetAgent - Web 重置密码漏洞审计 Agent
+"""Password reset audit agent backed by DeepAgents."""
 
-检查密码重置接口是否需要提供旧密码，以及是否有安全控制
-"""
-
-import sys
 import json
-from typing import List, Dict, Optional
-from pathlib import Path
-from datetime import datetime
+from typing import List
 
-from tools.registry import ToolRegistry
-from tools.executor import ToolExecutor
-from models import CodeContext, AuditResult, FunctionInfo
-from utils.llm_client import LLMClient
-from cli import get_config_object
-
-
-class PasswordResetSubmitTool:
-    """提交密码重置审计结果的工具"""
-
-    name = "submit_password_reset"
-    description = "提交密码重置审计结果"
-
-    commands = {
-        "submit_password_reset": {
-            "description": "密码重置审计完成，提交审计结果",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "summary": {
-                        "type": "string",
-                        "description": "审计发现的总结",
-                    },
-                    "is_vulnerable": {
-                        "type": "boolean",
-                        "description": "是否存在密码重置漏洞",
-                    },
-                    "confidence": {
-                        "type": "string",
-                        "enum": ["high", "medium", "low"],
-                        "description": "漏洞置信度",
-                    },
-                    "description": {
-                        "type": "string",
-                        "description": "漏洞描述",
-                    },
-                    "taint_flow": {
-                        "type": "string",
-                        "description": "污点流向描述",
-                    },
-                    "recommendation": {
-                        "type": "string",
-                        "description": "修复建议",
-                    },
-                    "code_map": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "function_name": {"type": "string"},
-                                "file_path": {"type": "string"},
-                                "line_start": {"type": "integer"},
-                                "line_end": {"type": "integer"},
-                                "code_snippet": {"type": "string"},
-                                "is_entry_point": {"type": "boolean"},
-                                "taint_source": {"type": "string"},
-                                "taint_path": {"type": "string"},
-                            },
-                        },
-                        "description": "相关代码上下文列表",
-                    },
-                },
-                "required": ["is_vulnerable", "confidence"],
-            },
-        },
-    }
-
-    def execute(self, command: str, args: dict) -> str:
-        return "已提交密码重置审计结果"
-
-
-# 注册 submit_password_reset 工具
-ToolRegistry._commands["submit_password_reset"] = PasswordResetSubmitTool
-ToolRegistry._tools["submit_password_reset"] = PasswordResetSubmitTool
+from agents.deepagents_audit_runner import DeepAgentsAuditRunner
+from models import AuditResult, CodeContext, FunctionInfo
 
 
 class PasswordResetAgent:
-    """
-    Web 重置密码漏洞审计 Agent
+    """Web 重置密码漏洞审计 Agent。"""
 
-    检查密码重置接口是否安全
-    """
-
-    EXPLORATION_TOOLS = [
-        "read_file", "list_dir", "search_code",
-        "go_to_def", "find_refs",
-        "skill",  # Skills 工具
-        "submit_password_reset",
-    ]
-
-    # 密码重置相关关键词
     RESET_KEYWORDS = [
         "reset_password", "change_password", "update_password",
         "modify_password", "set_password", "new_password",
         "password_reset", "password_change", "password_update",
     ]
 
-    # 旧密码相关关键词
     OLD_PASSWORD_KEYWORDS = [
         "old_password", "old_passwd", "old_pwd", "current_password",
         "current_passwd", "current_pwd", "previous_password",
         "verify_old", "check_old", "auth_old",
     ]
 
-    # 重置令牌相关关键词
     TOKEN_KEYWORDS = [
         "token", "verify_token", "reset_token", "password_token",
         "code", "verify_code", "reset_code", "otp", "verification_code",
-        " verification_code", "sms_code", "email_token",
+        "sms_code", "email_token",
     ]
 
-    # 安全问题相关关键词
     SECURITY_KEYWORDS = [
         "security_question", "security_q", "secret_question",
         "verify_question", "answer",
@@ -143,93 +49,52 @@ class PasswordResetAgent:
         self.debug = debug
         self.output_dir = output_dir
 
-        self._llm_client = None
-        self._tools_schema: Optional[List[Dict]] = None
-
-    @property
-    def llm_client(self):
-        """懒加载 LLM 客户端"""
-        if self._llm_client is None:
-            self._llm_client = LLMClient()
-        return self._llm_client
-
-    @property
-    def tools_schema(self) -> List[Dict]:
-        """获取 OpenAI tools schema"""
-        if self._tools_schema is None:
-            self._tools_schema = ToolRegistry.to_openai_tools(self.EXPLORATION_TOOLS)
-        return self._tools_schema
-
-    def call_tool(self, name: str, arguments: Dict) -> str:
-        """调用工具执行"""
-        result = ToolExecutor.call(name, arguments)
-        if self.debug:
-            print(f"  [Tool] {name}({arguments}) -> {result[:100]}...", file=sys.stderr)
-        return result
+    def audit(self) -> AuditResult:
+        return DeepAgentsAuditRunner(
+            agent_name="password_reset_agent",
+            vulnerability_type="password_reset",
+            function_info=self.function_info,
+            code_map=self.code_map,
+            system_prompt=self._build_system_prompt(),
+            user_message=self._build_user_message(),
+            project_path=self.project_path,
+            debug=self.debug,
+            output_dir=self.output_dir,
+        ).run()
 
     def _build_system_prompt(self) -> str:
-        """构建系统提示"""
         return f"""你是一个代码安全审计专家，专门进行 Web 重置密码漏洞审计。
 
 ## 任务
-从接口函数 {self.function_info.func_name} 开始
-基于提供的 codemap，分析代码中是否存在密码重置漏洞。
+从接口函数 {self.function_info.func_name} 开始，基于提供的 codemap，分析代码中是否存在密码重置漏洞。
 
 ## 漏洞定义
-密码重置漏洞指：攻击者可以在不需要提供旧密码的情况下设置新密码。
-这是严重漏洞，因为攻击者可以完全接管他人帐户。
+密码重置漏洞指：攻击者可以在不需要提供旧密码，或不满足必要身份校验的情况下设置新密码。
 
 ## 审计要点
-1. 检查密码重置函数中是否需要提供旧密码
-2. 识别密码重置的验证方式：
-   - 仅需要邮箱/手机号验证 -> 高风险
-   - 需要旧密码 -> 低风险
-   - 需要安全问题验证 -> 中风险
-   - 需要令牌/验证码 + 额外验证 -> 低风险
-3. 分析数据流：外部输入 -> 密码重置 -> 旧密码验证
-4. 检查是否有额外的安全控制（如令牌过期、单次使用令牌等）
+1. 检查密码重置函数中是否需要提供旧密码。
+2. 识别密码重置的验证方式：旧密码、令牌/验证码、安全问题、邮箱/手机号等。
+3. 分析数据流：外部输入 -> 密码重置 -> 身份校验/旧密码验证 -> 新密码设置。
+4. 检查令牌是否过期、单次使用、绑定账号或绑定场景。
 
 ## 漏洞判断标准
-- 无需任何验证即可重置密码 -> 高置信度严重漏洞
-- 仅提供邮箱/手机号即可重置密码 -> 高置信度严重漏洞
-- 无需旧密码且可绕过验证 -> 高置信度严重漏洞
-- 需要旧密码进行验证 -> 无漏洞
-- 需要令牌/验证码且有额外验证 -> 低风险或无漏洞
+- 无需任何验证即可重置密码 -> 高置信度严重漏洞。
+- 仅提供邮箱/手机号即可重置密码 -> 高置信度严重漏洞。
+- 无需旧密码且令牌/验证码可绕过或弱绑定 -> 高置信度或中置信度漏洞。
+- 需要旧密码进行验证 -> 通常无漏洞。
+- 需要令牌/验证码且有过期、单次使用、账号绑定等额外验证 -> 低风险或无漏洞。
 
-## 工具使用
-你可以使用提供的工具来探索代码。每次调用一个工具，根据结果决定下一步行动。
-工具的详细说明（包括参数和使用场景）已在工具 schema 中定义，请参考工具描述。
-
-## 输出格式
-当你认为已经审计完成时，调用 submit_password_reset 工具提交审计结果。
-
-强制要求：
-- 你应该只关注上面提供的接口函数{self.function_info.func_name}相关的数据流和代码路径，不要偏离主题去分析其他无关的代码。
-- 你应该只关注上面提供的接口函数{self.function_info.func_name}相关的数据流和代码路径，不要偏离主题去分析其他无关的代码。
-- 你应该只关注上面提供的接口函数{self.function_info.func_name}相关的数据流和代码路径，不要偏离主题去分析其他无关的代码。
-重要的事情说三遍
-- 禁止直接搜索关键词的名字，应该通过分析数据流来发现潜在的命令注入漏洞
-- 禁止全局扫描关键词调用
-- 禁止在与接口函数无关的代码中分析命令注入漏洞
-
-分析前检查：
-- 确认要分析的函数数据流与接口函数相关
-- 确认数据流相关的具体原因，是参数传递、全局变量、还是其他方式
-- 如果不能确认数据流与接口函数相关，则不应该调用工具获取与接口函数无关的代码信息
-
-
-【为什么】
-- 直接搜索关键词会产生大量误报
-- 只有从指定入口追踪的数据流才是有效审计路径
-- 违反此规则的分析结果将被视为无效
+## 分析约束
+- 只关注接口函数 {self.function_info.func_name} 相关的数据流和代码路径。
+- 不要通过全局搜索关键词代替数据流分析；grep 只用于定位 RPCID、路由 ID、动态分发标识等必要场景。
+- 如果不能确认数据流与接口函数相关，不要把无关代码纳入结论。
 """
 
     def _build_user_message(self) -> str:
-        """构建用户消息，包含 codemap"""
         code_map_str = json.dumps(
             [ctx.model_dump() for ctx in self.code_map],
             indent=2,
-            ensure_ascii=False
+            ensure_ascii=False,
         )
 
         return f"""请基于以下 codemap 进行密码重置漏洞审计：
@@ -238,158 +103,4 @@ class PasswordResetAgent:
 {code_map_str}
 ```
 
-请使用工具调用来深入分析代码，确认密码重置接口是否需要提供旧密码。
-当你认为已经审计完成时，调用 submit_password_reset 工具提交审计结果。"""
-
-    def _save_conversation_history(self, messages: List[Dict]):
-        """保存该 agent 的对话历史"""
-        if not self.output_dir:
-            return  # 如果没有设置输出目录，则不保存
-
-        # 构建输出目录结构：output_dir/conversations/agent_name/function_name.json
-        conversations_dir = Path(self.output_dir) / "conversations" / "password_reset_agent"
-        conversations_dir.mkdir(parents=True, exist_ok=True)
-
-        # 清理函数名中的非法字符
-        safe_func_name = "".join(c if c.isalnum() or c in ("_", "-") else "_" for c in self.function_info.func_name)
-
-        conversation_file = conversations_dir / f"{safe_func_name}.json"
-
-        # 准备保存对话历史
-        conversation_data = {
-            "function_info": self.function_info.model_dump(),
-            "conversation_history": messages,
-            "saved_at": datetime.now().isoformat(),
-            "agent": "password_reset_agent"
-        }
-
-        with open(conversation_file, "w", encoding="utf-8") as f:
-            json.dump(conversation_data, f, indent=2, ensure_ascii=False)
-
-        if self.debug:
-            print(f"  [对话历史] password_reset_agent 已保存: {conversation_file}", file=sys.stderr)
-
-    def audit(self) -> AuditResult:
-        """
-        执行审计
-
-        Returns:
-            AuditResult 审计结果
-        """
-        # 构建消息
-        system_prompt = self._build_system_prompt()
-        user_message = self._build_user_message()
-
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_message},
-        ]
-
-        if self.debug:
-            print(f"\n[PasswordResetAgent] 开始审计", file=sys.stderr)
-
-        max_turns = get_config_object().max_turns
-        for turn in range(max_turns):
-            if self.debug:
-                print(f"\n[第{turn+1}轮]", file=sys.stderr)
-
-            response = self.llm_client.chat(
-                messages=messages,
-                tools=self.tools_schema,
-                tool_choice="required",
-                temperature=0.1,
-            )
-
-            # 检查是否有工具调用
-            if response.tool_calls:
-                for tc in response.tool_calls:
-                    print(f"\n[工具调用] {tc['function']['name']}({tc['function']['arguments']})", file=sys.stderr)
-                    func_name = tc["function"]["name"]
-                    arguments = tc["function"]["arguments"]
-
-                    # 检查是否是 submit_password_reset 调用
-                    if func_name == "submit_password_reset":
-                        print("[提交审计结果]", file=sys.stderr)
-                        # 保存对话历史
-                        self._save_conversation_history(messages)
-                        return self._parse_audit_result(arguments, messages)
-
-                    # 特殊处理，禁止直接search_code搜索关键词
-                    if func_name == "search_code" and "pattern" in arguments:
-                        pattern = arguments["pattern"]
-                        all_keywords = (self.RESET_KEYWORDS + self.OLD_PASSWORD_KEYWORDS +
-                                       self.TOKEN_KEYWORDS + self.SECURITY_KEYWORDS)
-                        if pattern in all_keywords:
-                            print(f"  [警告] 禁止直接搜索关键词 '{pattern}'，请通过分析数据流来发现潜在的密码重置漏洞", file=sys.stderr)
-                            result = f"错误：禁止直接搜索关键词 '{pattern}'，请通过分析数据流来发现潜在的密码重置漏洞"
-                        else:
-                            result = self.call_tool(func_name, arguments)
-                    # 执行工具
-                    else:
-                        result = self.call_tool(func_name, arguments)
-
-                    # 将工具结果添加到对话
-                    tc_for_message = {
-                        "id": tc["id"],
-                        "type": tc["type"],
-                        "function": {
-                            "name": tc["function"]["name"],
-                            "arguments": json.dumps(tc["function"]["arguments"], ensure_ascii=False),
-                        }
-                    }
-                    messages.append({
-                        "role": "assistant",
-                        "content": "",
-                        "tool_calls": [tc_for_message],
-                    })
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tc["id"],
-                        "content": result,
-                    })
-            else:
-                # 没有工具调用，提示 LLM 使用工具
-                if self.debug:
-                    print("[提示] 请使用工具进行审计，或调用 submit 结束", file=sys.stderr)
-                messages.append({
-                    "role": "user",
-                    "content": "请使用工具进行审计，或调用 submit_password_reset 工具结束审计。"
-                })
-
-        # 达到最大轮数，返回空结果，但仍保存对话历史
-        self._save_conversation_history(messages)
-        return AuditResult(
-            vulnerability_type="password_reset",
-            is_vulnerable=False,
-            confidence="low",
-            description="审计未完成",
-            code_map=self.code_map,
-        )
-
-    def _parse_audit_result(self, submit_args: dict, messages: List[Dict]) -> AuditResult:
-        """解析审计结果"""
-        # 处理 code_map
-        code_map_data = submit_args.get("code_map", [])
-        code_map = []
-        for cm in code_map_data:
-            code_map.append(CodeContext(
-                function_name=cm.get("function_name", ""),
-                file_path=cm.get("file_path", ""),
-                line_start=cm.get("line_start", 0),
-                line_end=cm.get("line_end", 0),
-                code_snippet=cm.get("code_snippet", ""),
-                is_entry_point=cm.get("is_entry_point", False),
-                taint_source=cm.get("taint_source"),
-                taint_path=cm.get("taint_path"),
-            ))
-
-        print(f"\n[审计结果] is_vulnerable={submit_args.get('is_vulnerable')}, confidence={submit_args.get('confidence')}", file=sys.stderr)
-        return AuditResult(
-            vulnerability_type="password_reset",
-            is_vulnerable=submit_args.get("is_vulnerable", False),
-            confidence=submit_args.get("confidence", "low"),
-            description=submit_args.get("description") or submit_args.get("summary", ""),
-            taint_flow=submit_args.get("taint_flow"),
-            recommendation=submit_args.get("recommendation"),
-            code_map=code_map,
-        )
+请结合必要源码确认密码重置接口是否需要旧密码或等价安全校验，并返回结构化审计结果。"""
