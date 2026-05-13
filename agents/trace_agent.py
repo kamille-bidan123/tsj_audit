@@ -31,8 +31,10 @@ class TraceAgent:
         debug: bool = False,
         output_dir: str = None,
         # TUI 回调
+        on_functions_loaded: callable = None,
         on_function_start: callable = None,
         on_function_complete: callable = None,
+        on_function_restored: callable = None,
         on_log: callable = None,
     ):
         self.project_path = project_path
@@ -40,8 +42,10 @@ class TraceAgent:
         self.output_dir = output_dir
 
         # TUI 回调
+        self.on_functions_loaded = on_functions_loaded or (lambda x: None)
         self.on_function_start = on_function_start or (lambda x: None)
         self.on_function_complete = on_function_complete or (lambda x: None)
+        self.on_function_restored = on_function_restored or (lambda x: None)
         self.on_log = on_log or (lambda x: None)
 
         self._input_knowledge: Optional[str] = None
@@ -49,7 +53,7 @@ class TraceAgent:
 
     def _log(self, message: str) -> None:
         """输出日志到 stderr 和 TUI"""
-        print(message, file=sys.stderr)
+        print(message, file=sys.stderr, flush=True)
         self.on_log(message)
 
     def _get_checkpoint_dir(self, output_dir: str) -> Path:
@@ -227,14 +231,22 @@ class TraceAgent:
 
         Args:
             func_info: 接口函数信息
-            max_turns: 探索阶段最大轮数
-
         Returns:
             TraceResult 追踪结果
         """
-        from agents.trace_workflow import TraceWorkflow
+        from agents.runtime_factory import create_trace_explorer
 
-        return TraceWorkflow(self).run(func_info)
+        code_logic, code_map, messages = create_trace_explorer(self).run(func_info)
+        audit_results, exploit_results = self._audit_codemap(func_info, code_map)
+        self._save_conversation_history("trace_agent", func_info, messages)
+
+        return TraceResult(
+            function_info=func_info,
+            code_logic=code_logic,
+            code_map=code_map,
+            audit_results=audit_results,
+            exploit_results=exploit_results,
+        )
 
     def _audit_codemap(
         self,
@@ -259,9 +271,11 @@ class TraceAgent:
 
         audit_results, exploit_results = audit_agent.audit()
 
-        self._log(f"[审计结果] 总计发现 {len(audit_results)} 个潜在漏洞")
+        vulnerable_count = sum(1 for ar in audit_results if ar.is_vulnerable)
+        self._log(f"[审计结果] 总计发现 {vulnerable_count} 个潜在漏洞，记录 {len(audit_results)} 条审计结果")
         for ar in audit_results:
-            self._log(f"  - {ar.vulnerability_type}: {ar.is_vulnerable} (置信度: {ar.confidence})")
+            title = f" / {ar.title}" if ar.title else ""
+            self._log(f"  - {ar.vulnerability_type}{title}: {ar.is_vulnerable} (置信度: {ar.confidence})")
 
         return audit_results, exploit_results
 
@@ -289,23 +303,29 @@ class TraceAgent:
 
         # 加载扫描结果
         scan_results = self.load_scan_results(scan_path, code_path)
+        self.on_functions_loaded(scan_results)
 
-        if self.debug:
-            print(
-                f"\n[TraceAgent] 找到 {len(scan_results)} 个接口函数", file=sys.stderr)
+        self._log(f"[TraceAgent] 找到 {len(scan_results)} 个接口函数")
 
         # 如果启用了resume模式，加载已有的检查点
         checkpoints = {}
         completed_funcs = set()
-        print(f"[DEBUG] resume={resume}, output_dir={output_dir}", file=sys.stderr)
+        if self.debug:
+            print(f"[DEBUG] resume={resume}, output_dir={output_dir}", file=sys.stderr)
         if resume and output_dir:
-            print(f"[DEBUG] 正在加载检查点...", file=sys.stderr)
+            if self.debug:
+                print(f"[DEBUG] 正在加载检查点...", file=sys.stderr)
             checkpoints = self._load_all_checkpoints(output_dir)
             completed_funcs = set(checkpoints.keys())
-            print(f"[DEBUG] 加载了 {len(checkpoints)} 个检查点", file=sys.stderr)
+            if self.debug:
+                print(f"[DEBUG] 加载了 {len(checkpoints)} 个检查点", file=sys.stderr)
             if completed_funcs:
                 print(f"\n[TraceAgent] 从检查点恢复: 找到 {len(completed_funcs)} 个已完成的函数", file=sys.stderr)
                 print(f"[TraceAgent] 已完成的函数列表: {list(completed_funcs)}", file=sys.stderr)
+                for func_info in scan_results:
+                    checkpoint = checkpoints.get(func_info.func_name)
+                    if checkpoint:
+                        self.on_function_restored(checkpoint.function_info)
 
         # 逐个审计
         for func_info in scan_results:
@@ -318,11 +338,7 @@ class TraceAgent:
                 continue
 
             # 新审计未完成的函数
-            if self.debug:
-                print(f"\n{'='*60}", file=sys.stderr)
-                print(
-                    f"[TraceAgent] 审计函数：{func_name} @ {func_info.file_path}:{func_info.start_line}", file=sys.stderr)
-                print(f"{'='*60}", file=sys.stderr)
+            self._log(f"[TraceAgent] 开始函数：{func_name} @ {func_info.file_path}:{func_info.start_line}")
 
             # 通知开始审计
             self.on_function_start(func_info)
@@ -331,6 +347,7 @@ class TraceAgent:
 
             # 通知完成审计
             self.on_function_complete(func_info)
+            self._log(f"[TraceAgent] 完成函数：{func_name}")
 
             # 保存检查点
             if output_dir:
@@ -338,6 +355,7 @@ class TraceAgent:
 
         # 合并所有 checkpoint 生成最终报告
         if output_dir:
+            self._log(f"[导出] 合并 checkpoint 并生成报告: {output_dir}")
             merge_checkpoints_and_export(output_dir, debug=self.debug)
 
     def audit_single(

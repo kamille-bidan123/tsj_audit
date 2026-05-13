@@ -9,9 +9,7 @@
 """
 
 import argparse
-from typing import Optional
-
-from config import init_settings, get_config, set_config, Config
+from config import init_settings
 
 
 def parse_args() -> argparse.Namespace:
@@ -23,13 +21,13 @@ def parse_args() -> argparse.Namespace:
         epilog="""
 示例:
   # 基本使用
-  python main.py --api-key sk-xxx
+  python main.py
 
   # 调试模式
-  python main.py --api-key sk-xxx --debug
+  python main.py --debug
 
   # 断点续审（从中间停止处恢复审计）
-  python main.py --api-key sk-xxx --resume
+  python main.py --resume
 
 配置文件:
   程序会尝试从以下位置加载 .env 文件 (优先级从高到低):
@@ -39,45 +37,53 @@ def parse_args() -> argparse.Namespace:
         """,
     )
 
-    # ========== API 配置 ==========
-    api_group = parser.add_argument_group("API 配置")
+    # ========== Runtime 配置 ==========
+    api_group = parser.add_argument_group("Runtime 配置")
 
     api_group.add_argument(
-        "--base-url",
+        "--agent-runtime",
         type=str,
+        choices=["opencode", "codex", "claudecode"],
         default=None,
-        help="API 基础 URL (默认从配置文件读取)",
+        help="Agent 内层 runtime（默认从配置文件读取）",
     )
 
     api_group.add_argument(
-        "--api-key",
+        "--opencode-base-url",
         type=str,
         default=None,
-        help="API 密钥 (必需，可从 .env 或命令行指定)",
+        help="opencode serve REST API 地址（默认从配置文件读取）",
     )
 
     api_group.add_argument(
-        "--model-name",
+        "--opencode-provider-id",
         type=str,
         default=None,
-        help="模型名称 (默认从配置文件读取)",
+        help="opencode providerID（默认从配置文件读取）",
+    )
+
+    api_group.add_argument(
+        "--opencode-model-id",
+        type=str,
+        default=None,
+        help="opencode modelID（默认从配置文件读取）",
     )
 
     # ========== 功能开关 ==========
     feature_group = parser.add_argument_group("功能开关")
 
     feature_group.add_argument(
-        "--enable-lsp",
-        action="store_true",
-        default=None,
-        help="启用 LSP 语言服务器支持",
-    )
-
-    feature_group.add_argument(
         "--disable-exploit",
         action="store_true",
         default=None,
         help="禁用 ExploitAgent（不生成 PoC）",
+    )
+
+    feature_group.add_argument(
+        "--enable-fallback-audit",
+        action="store_true",
+        default=None,
+        help="启用兜底审计（正常漏洞类型完成后，额外审计已有类型以外的安全问题）",
     )
 
     feature_group.add_argument(
@@ -101,6 +107,13 @@ def parse_args() -> argparse.Namespace:
         help="指定起始扫描脚本",
     )
 
+    feature_group.add_argument(
+        "--attack-surface-skill",
+        type=str,
+        default=None,
+        help="指定攻击面 skill 名，自动发现该攻击面的所有入口函数并审计",
+    )
+
     # ========== 项目配置 ==========
     project_group = parser.add_argument_group("项目配置")
 
@@ -115,32 +128,10 @@ def parse_args() -> argparse.Namespace:
     audit_group = parser.add_argument_group("审计配置")
 
     audit_group.add_argument(
-        "--project-type",
-        type=str,
-        default=None,
-        help="项目类型",
-    )
-
-    audit_group.add_argument(
-        "--attack-surface",
-        type=str,
-        default=None,
-        help="攻击面类型",
-    )
-
-    audit_group.add_argument(
         "--output-dir",
         type=str,
         default=None,
         help="审计报告输出目录",
-    )
-
-    audit_group.add_argument(
-        "--exploit-backend",
-        type=str,
-        choices=["opensandbox", "filesystem"],
-        default=None,
-        help="Exploit 执行后端（默认从配置读取）",
     )
 
     audit_group.add_argument(
@@ -151,10 +142,10 @@ def parse_args() -> argparse.Namespace:
     )
 
     audit_group.add_argument(
-        "--opensandbox-image",
+        "--audit-types",
         type=str,
         default=None,
-        help="OpenSandbox 容器镜像（默认从配置读取）",
+        help="额外显式启用的审计类型，逗号分隔；会追加到攻击面 skill 绑定的 required_audit_types",
     )
 
     args = parser.parse_args()
@@ -163,41 +154,4 @@ def parse_args() -> argparse.Namespace:
     cli_dict = vars(args)
     config = init_settings(cli_dict)
 
-    # 验证必需参数
-    if not config.api_key:
-        parser.error("--api-key 是必需的，可以通过命令行或.env 文件提供")
-
     return config
-
-
-def get_global_config() -> dict:
-    """
-    获取全局配置字典
-
-    为了与其他模块兼容，返回配置字典格式。
-
-    Returns:
-        dict 配置字典
-    """
-    return get_config().model_dump()
-
-
-def set_global_config(config_dict: dict):
-    """
-    设置全局配置
-
-    Args:
-        config_dict: 配置字典
-    """
-    config = Config(**config_dict)
-    set_config(config)
-
-
-def get_config_object() -> Config:
-    """
-    获取配置对象
-
-    Returns:
-        Config 配置对象
-    """
-    return get_config()

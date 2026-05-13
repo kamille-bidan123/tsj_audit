@@ -1,7 +1,0 @@
-{
-  "dependencies": ["."],
-  "graphs": {
-    "trace_audit": "./agents/studio_graph.py:graph"
-  },
-  "env": ".env"
-}

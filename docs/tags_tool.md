@@ -6,6 +6,8 @@
 - `go_to_def <symbol>` - 跳转到符号定义
 - `find_refs <symbol>` - 查找符号引用
 
+它也可以作为独立 MCP stdio server 运行，供 Codex、opencode、Claude Code 等 agent runtime 通过 MCP 配置接入。
+
 ## 使用前准备
 
 在使用 `go_to_def`、`find_refs` 等命令前，需要先构建代码索引。
@@ -74,6 +76,46 @@ find_refs hello
 /path/to/file.c:line_number: 代码内容
 ```
 
+## 作为 MCP 工具运行
+
+启动 MCP stdio server：
+
+```bash
+python -m tools.tags_mcp_server --project-path /app/vulnerable_code
+```
+
+带调试日志：
+
+```bash
+python -m tools.tags_mcp_server --project-path /app/vulnerable_code --debug
+```
+
+MCP server 暴露两个 tool：
+
+- `go_to_def(symbol: str) -> str`
+- `find_refs(symbol: str) -> str`
+
+示例 MCP 静态配置片段：
+
+```json
+{
+  "mcpServers": {
+    "tsj-tags": {
+      "command": "python",
+      "args": [
+        "-m",
+        "tools.tags_mcp_server",
+        "--project-path",
+        "/app/vulnerable_code"
+      ],
+      "cwd": "/Users/lometsj/Documents/llm_tool/tsj_audit"
+    }
+  }
+}
+```
+
+如果 MCP 客户端不支持 `cwd` 字段，可以把 `command` 配成项目虚拟环境里的 Python 绝对路径，并在 `args` 中使用脚本绝对路径。
+
 
 ## 使用示例
 
@@ -84,10 +126,10 @@ find_refs hello
 python scripts/build_index.py /app/vulnerable_code
 
 # 2. 查找危险函数定义
-ToolExecutor.call("go_to_def strcpy")
+python -c 'from tools import go_to_def; print(go_to_def("strcpy"))'
 
 # 3. 查找所有使用位置
-ToolExecutor.call("find_refs strcpy")
+python -c 'from tools import find_refs; print(find_refs("strcpy"))'
 
 ```
 

@@ -19,11 +19,12 @@ class FunctionInfo(BaseModel):
     start_line: int
     end_line: int
     code_snippet: str
+    # 当前入口函数需要使用的审计知识 skill，如 "civetweb_audit"。
+    skill: Optional[str] = None
     # 外部输入点标识（如 "mg_get_var", "mg_websocket_accept" 等）
     # 本质是知识文档的引用，标识这个函数的外部输入来源
-    input: str
-    # 审计类型列表，指定该接口需要审计哪些漏洞类型
-    audit_types: Optional[List[str]] = None
+    # 兼容历史扫描结果；新流程应使用 skill 选择知识库。
+    input: str = ""
 
 
 class CodeContext(BaseModel):
@@ -50,6 +51,9 @@ class TraceResult(BaseModel):
 class AuditResult(BaseModel):
     """漏洞审计结果"""
     vulnerability_type: str  # 漏洞类型，如 "command_injection", "sql_injection"
+    finding_id: Optional[str] = None  # 同一漏洞类型下的具体发现 ID
+    title: Optional[str] = None  # 具体发现标题
+    severity: Optional[str] = None  # 严重程度：critical, high, medium, low, info
     is_vulnerable: bool  # 是否存在漏洞
     confidence: str  # 置信度：high, medium, low
     description: str  # 漏洞描述

@@ -1,0 +1,798 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TSJ Audit 扩展管理</title>
+  <style>
+    :root {
+      --bg: #f6f7f9;
+      --panel: #ffffff;
+      --panel-soft: #f0f2f5;
+      --text: #171a1f;
+      --muted: #6b7280;
+      --line: #d9dde4;
+      --line-strong: #b8c0cc;
+      --accent: #0f766e;
+      --accent-soft: #d8f3ef;
+      --danger: #b42318;
+      --danger-soft: #fee4e2;
+      --warn: #b54708;
+      --shadow: 0 8px 24px rgba(20, 29, 43, 0.08);
+      color-scheme: light;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 14px;
+    }
+
+    button,
+    input,
+    textarea,
+    select {
+      font: inherit;
+    }
+
+    button {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      color: var(--text);
+      min-height: 34px;
+      padding: 0 12px;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+
+    button:hover { border-color: var(--line-strong); }
+    button.primary { background: var(--accent); border-color: var(--accent); color: white; }
+    button.danger { color: var(--danger); border-color: #f5b4ae; background: #fffafa; }
+    button.ghost { background: transparent; }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    .app {
+      display: grid;
+      grid-template-columns: 248px minmax(300px, 430px) minmax(520px, 1fr);
+      min-height: 100vh;
+    }
+
+    .sidebar {
+      border-right: 1px solid var(--line);
+      background: #111827;
+      color: white;
+      padding: 22px 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 700;
+      font-size: 16px;
+      letter-spacing: 0;
+    }
+
+    .mark {
+      width: 28px;
+      height: 28px;
+      border-radius: 6px;
+      background: var(--accent);
+      display: grid;
+      place-items: center;
+      font-weight: 800;
+    }
+
+    .nav {
+      display: grid;
+      gap: 8px;
+    }
+
+    .nav button {
+      width: 100%;
+      justify-content: flex-start;
+      text-align: left;
+      background: transparent;
+      border-color: transparent;
+      color: #cbd5e1;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-height: 40px;
+    }
+
+    .nav button.active {
+      background: rgba(255,255,255,0.1);
+      color: white;
+      border-color: rgba(255,255,255,0.08);
+    }
+
+    .sidebar-note {
+      margin-top: auto;
+      color: #9ca3af;
+      line-height: 1.5;
+      font-size: 12px;
+      border-top: 1px solid rgba(255,255,255,0.12);
+      padding-top: 16px;
+    }
+
+    .list-pane {
+      border-right: 1px solid var(--line);
+      background: var(--panel);
+      display: grid;
+      grid-template-rows: auto auto 1fr;
+      min-width: 0;
+    }
+
+    .pane-head {
+      padding: 18px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    h1, h2, h3, p { margin: 0; }
+    h1 { font-size: 17px; }
+    h2 { font-size: 16px; }
+    h3 { font-size: 13px; color: var(--muted); font-weight: 600; }
+
+    .search {
+      padding: 12px 18px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    input,
+    textarea {
+      width: 100%;
+      border: 1px solid var(--line);
+      background: white;
+      border-radius: 6px;
+      padding: 9px 10px;
+      color: var(--text);
+      outline: none;
+    }
+
+    input:focus,
+    textarea:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-soft);
+    }
+
+    textarea {
+      min-height: 120px;
+      resize: vertical;
+      line-height: 1.55;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 13px;
+    }
+
+    .items {
+      overflow: auto;
+      padding: 8px;
+    }
+
+    .item {
+      width: 100%;
+      text-align: left;
+      border: 1px solid transparent;
+      background: transparent;
+      padding: 12px;
+      min-height: 76px;
+      border-radius: 6px;
+      display: block;
+      cursor: pointer;
+    }
+
+    .item:hover { background: var(--panel-soft); }
+    .item.active { background: var(--accent-soft); border-color: #99d7cf; }
+    .item-title { font-weight: 700; margin-bottom: 5px; }
+    .item-meta { color: var(--muted); font-size: 12px; line-height: 1.45; word-break: break-all; }
+
+    .editor-pane {
+      min-width: 0;
+      display: grid;
+      grid-template-rows: auto 1fr;
+      background: var(--bg);
+    }
+
+    .editor-head {
+      padding: 18px 22px;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .editor {
+      padding: 20px 22px;
+      overflow: auto;
+    }
+
+    .form {
+      max-width: 980px;
+      display: grid;
+      gap: 16px;
+    }
+
+    .section {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      padding: 16px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    label {
+      display: grid;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .hint {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border: 1px solid var(--line);
+      background: white;
+      border-radius: 999px;
+      padding: 7px 10px;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .chip input {
+      width: auto;
+      margin: 0;
+      accent-color: var(--accent);
+    }
+
+    .empty {
+      height: 100%;
+      display: grid;
+      place-items: center;
+      color: var(--muted);
+      text-align: center;
+      padding: 40px;
+    }
+
+    .toast {
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      max-width: 520px;
+      background: #111827;
+      color: white;
+      padding: 12px 14px;
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      display: none;
+      z-index: 10;
+    }
+
+    .toast.show { display: block; }
+    .toast.error { background: var(--danger); }
+
+    .path {
+      color: var(--muted);
+      font-size: 12px;
+      word-break: break-all;
+      margin-top: 4px;
+    }
+
+    .danger-zone {
+      border-color: #fed7d2;
+      background: #fffafa;
+    }
+
+    @media (max-width: 1100px) {
+      .app {
+        grid-template-columns: 210px minmax(280px, 380px) minmax(420px, 1fr);
+      }
+    }
+
+    @media (max-width: 860px) {
+      .app {
+        grid-template-columns: 1fr;
+      }
+      .sidebar,
+      .list-pane {
+        border-right: 0;
+      }
+      .sidebar {
+        min-height: auto;
+      }
+      .nav {
+        grid-template-columns: 1fr 1fr;
+      }
+      .list-pane {
+        min-height: 320px;
+      }
+      .grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <aside class="sidebar">
+      <div class="brand"><span class="mark">T</span><span>TSJ Audit<br />扩展管理</span></div>
+      <nav class="nav">
+        <button id="nav-attack-surfaces" class="active" type="button">攻击面 Skill</button>
+        <button id="nav-skills" type="button">一般 Skill</button>
+        <button id="nav-specs" type="button">漏洞类型 YAML</button>
+      </nav>
+      <div class="sidebar-note">
+        修改会直接写入 <code>skills/attack_surface/</code>、<code>skills/</code> 和 <code>audit_specs/</code>。
+      </div>
+    </aside>
+
+    <section class="list-pane">
+      <div class="pane-head">
+        <div>
+          <h1 id="list-title">攻击面 Skill</h1>
+          <p id="list-subtitle" class="hint">管理攻击面知识和必审漏洞类型</p>
+        </div>
+        <button id="new-btn" class="primary" type="button">新建</button>
+      </div>
+      <div class="search">
+        <input id="search" placeholder="搜索名称、描述或路径" />
+      </div>
+      <div id="items" class="items"></div>
+    </section>
+
+    <section class="editor-pane">
+      <div class="editor-head">
+        <div>
+          <h2 id="editor-title">选择一项开始编辑</h2>
+          <div id="editor-path" class="path"></div>
+        </div>
+        <div class="actions">
+          <button id="reload-btn" type="button">刷新</button>
+          <button id="delete-top-btn" class="danger" type="button" disabled>删除</button>
+          <button id="save-btn" class="primary" type="button" disabled>保存</button>
+        </div>
+      </div>
+      <div id="editor" class="editor">
+        <div class="empty">从左侧选择一个扩展项，或点击新建。</div>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast"></div>
+
+  <script>
+    const state = {
+      mode: "attack_surfaces",
+      attack_surface_skills: [],
+      skills: [],
+      audit_specs: [],
+      selectedId: null,
+      draft: null,
+      isNew: false,
+      query: "",
+    };
+
+    const els = {
+      navAttackSurfaces: document.querySelector("#nav-attack-surfaces"),
+      navSkills: document.querySelector("#nav-skills"),
+      navSpecs: document.querySelector("#nav-specs"),
+      listTitle: document.querySelector("#list-title"),
+      listSubtitle: document.querySelector("#list-subtitle"),
+      newBtn: document.querySelector("#new-btn"),
+      search: document.querySelector("#search"),
+      items: document.querySelector("#items"),
+      editorTitle: document.querySelector("#editor-title"),
+      editorPath: document.querySelector("#editor-path"),
+      editor: document.querySelector("#editor"),
+      reloadBtn: document.querySelector("#reload-btn"),
+      deleteTopBtn: document.querySelector("#delete-top-btn"),
+      saveBtn: document.querySelector("#save-btn"),
+      toast: document.querySelector("#toast"),
+    };
+
+    function api(path, options = {}) {
+      const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
+      return fetch(path, { ...options, headers }).then(async response => {
+        const text = await response.text();
+        const data = text ? JSON.parse(text) : {};
+        if (!response.ok) throw new Error(data.error || response.statusText);
+        return data;
+      });
+    }
+
+    function showToast(message, isError = false) {
+      els.toast.textContent = message;
+      els.toast.className = `toast show${isError ? " error" : ""}`;
+      clearTimeout(showToast.timer);
+      showToast.timer = setTimeout(() => { els.toast.className = "toast"; }, 2600);
+    }
+
+    function currentItems() {
+      const items = state.mode === "attack_surfaces"
+        ? state.attack_surface_skills
+        : state.mode === "skills"
+          ? state.skills
+          : state.audit_specs;
+      const q = state.query.trim().toLowerCase();
+      if (!q) return items;
+      return items.filter(item => JSON.stringify(item).toLowerCase().includes(q));
+    }
+
+    function setMode(mode) {
+      state.mode = mode;
+      state.selectedId = null;
+      state.draft = null;
+      state.isNew = false;
+      els.navAttackSurfaces.classList.toggle("active", mode === "attack_surfaces");
+      els.navSkills.classList.toggle("active", mode === "skills");
+      els.navSpecs.classList.toggle("active", mode === "specs");
+      els.listTitle.textContent = mode === "attack_surfaces"
+        ? "攻击面 Skill"
+        : mode === "skills"
+          ? "一般 Skill"
+          : "漏洞类型 YAML";
+      els.listSubtitle.textContent = mode === "attack_surfaces"
+        ? "管理攻击面知识和必审漏洞类型"
+        : mode === "skills"
+          ? "管理通用运行时技能"
+          : "管理每类漏洞的审计提示词";
+      render();
+    }
+
+    async function loadState() {
+      const data = await api("/api/state");
+      state.attack_surface_skills = data.attack_surface_skills || [];
+      state.skills = data.skills || [];
+      state.audit_specs = data.audit_specs || [];
+      render();
+    }
+
+    function selectItem(id) {
+      const source = state.mode === "attack_surfaces"
+        ? state.attack_surface_skills
+        : state.mode === "skills"
+          ? state.skills
+          : state.audit_specs;
+      const item = source.find(x => x.id === id);
+      if (!item) return;
+      state.selectedId = id;
+      state.isNew = false;
+      state.draft = clone(item);
+      render();
+    }
+
+    function newItem() {
+      state.isNew = true;
+      if (state.mode === "attack_surfaces") {
+        state.selectedId = "";
+        state.draft = {
+          id: "",
+          name: "",
+          description: "",
+          required_audit_types: [],
+          metadata: {},
+          discovery_knowledge: "",
+          input_knowledge: "",
+          poc_knowledge: "",
+        };
+      } else if (state.mode === "skills") {
+        state.selectedId = "";
+        state.draft = {
+          id: "",
+          name: "",
+          description: "",
+          required_audit_types: [],
+          metadata: {},
+          body: "# New Attack Surface Skill\n\n## 攻击面发现知识\n\n## 外部输入知识\n\n## PoC 生成知识\n",
+        };
+      } else {
+        state.selectedId = "";
+        state.draft = {
+          id: "",
+          name: "",
+          user_prompt: "## 专项审计任务\n请基于公共 system prompt 中的入口函数、Function Skill 和 Code Map 进行审计。\n",
+        };
+      }
+      render();
+    }
+
+    function render() {
+      renderList();
+      renderEditor();
+    }
+
+    function renderList() {
+      const items = currentItems();
+      const total = state.mode === "attack_surfaces"
+        ? state.attack_surface_skills.length
+        : state.mode === "skills"
+          ? state.skills.length
+          : state.audit_specs.length;
+      els.listSubtitle.textContent = state.mode === "attack_surfaces"
+        ? `管理攻击面知识和必审漏洞类型 · 已加载 ${total} 项`
+        : state.mode === "skills"
+          ? `管理通用运行时技能 · 已加载 ${total} 项`
+          : `管理每类漏洞的审计提示词 · 已加载 ${total} 项`;
+      els.items.innerHTML = items.map(item => {
+        const active = item.id === state.selectedId ? " active" : "";
+        const desc = state.mode === "specs"
+          ? escapeHtml((item.user_prompt || "").split("\n").find(Boolean) || "未填写提示词")
+          : state.mode === "attack_surfaces"
+          ? escapeHtml(item.description || "未填写描述")
+          : escapeHtml(item.description || "未填写描述");
+        const meta = state.mode === "attack_surfaces"
+          ? `${(item.required_audit_types || []).length} 个必审类型 · ${item.path || ""}`
+          : item.path || "";
+        return `
+          <button class="item${active}" type="button" data-id="${escapeAttr(item.id)}">
+            <div class="item-title">${escapeHtml(item.name || item.id)}</div>
+            <div class="item-meta">${desc}</div>
+            <div class="item-meta">${escapeHtml(meta)}</div>
+          </button>`;
+      }).join("") || `<div class="empty">${total ? "没有匹配项，请清空搜索条件" : "暂无数据，点击新建添加"}</div>`;
+      els.items.querySelectorAll(".item").forEach(button => {
+        button.addEventListener("click", () => selectItem(button.dataset.id));
+      });
+    }
+
+    function renderEditor() {
+      els.saveBtn.disabled = !state.draft;
+      els.deleteTopBtn.disabled = !state.draft || state.isNew;
+      if (!state.draft) {
+        els.editorTitle.textContent = "选择一项开始编辑";
+        els.editorPath.textContent = "";
+        els.editor.innerHTML = `<div class="empty">从左侧选择一个扩展项，或点击新建。</div>`;
+        return;
+      }
+      if (state.mode === "attack_surfaces") renderAttackSurfaceEditor();
+      else if (state.mode === "skills") renderSkillEditor();
+      else renderSpecEditor();
+    }
+
+    function renderAttackSurfaceEditor() {
+      const draft = state.draft;
+      els.editorTitle.textContent = state.isNew ? "新建攻击面 Skill" : `编辑 ${draft.name || draft.id}`;
+      els.editorPath.textContent = draft.path || "保存后写入 skills/attack_surface/<id>/SKILL.md";
+      const specOptions = state.audit_specs.map(spec => {
+        const checked = (draft.required_audit_types || []).includes(spec.name) ? "checked" : "";
+        return `<label class="chip"><input type="checkbox" value="${escapeAttr(spec.name)}" ${checked}>${escapeHtml(spec.name)}</label>`;
+      }).join("") || `<span class="hint">还没有漏洞类型 YAML，可先去创建。</span>`;
+      els.editor.innerHTML = `
+        <div class="form">
+          <section class="section">
+            <h3>基础信息</h3>
+            <div class="grid">
+              <label>ID
+                <input data-field="id" value="${escapeAttr(draft.id || "")}" ${state.isNew ? "" : "disabled"} placeholder="civetweb_audit">
+              </label>
+              <label>Name
+                <input data-field="name" value="${escapeAttr(draft.name || "")}" placeholder="civetweb_audit">
+              </label>
+            </div>
+            <label>Description
+              <input data-field="description" value="${escapeAttr(draft.description || "")}" placeholder="描述这个攻击面覆盖的入口和知识">
+            </label>
+          </section>
+          <section class="section">
+            <h3>必审漏洞类型</h3>
+            <div class="chips" id="required-types">${specOptions}</div>
+            <p class="hint">这些类型会跟随当前攻击面 skill 强制启用；其它类型需要在 .env 的 audit_types 中显式配置。</p>
+          </section>
+          <section class="section">
+            <h3>攻击面发现知识</h3>
+            <textarea data-field="discovery_knowledge" rows="12">${escapeHtml(draft.discovery_knowledge || "")}</textarea>
+          </section>
+          <section class="section">
+            <h3>外部输入知识</h3>
+            <textarea data-field="input_knowledge" rows="12">${escapeHtml(draft.input_knowledge || "")}</textarea>
+          </section>
+          <section class="section">
+            <h3>PoC 生成知识</h3>
+            <textarea data-field="poc_knowledge" rows="12">${escapeHtml(draft.poc_knowledge || "")}</textarea>
+          </section>
+          ${state.isNew ? "" : `<section class="section danger-zone"><h3>危险操作</h3><button class="delete-current danger" type="button">删除该攻击面 Skill</button><p class="hint">包含脚本或参考资料子文件的 skill 不会被界面直接删除。</p></section>`}
+        </div>`;
+      bindDraftInputs();
+      document.querySelectorAll("#required-types input").forEach(input => {
+        input.addEventListener("change", () => {
+          state.draft.required_audit_types = [...document.querySelectorAll("#required-types input:checked")].map(x => x.value);
+        });
+      });
+      bindDelete();
+    }
+
+    function renderSkillEditor() {
+      const draft = state.draft;
+      els.editorTitle.textContent = state.isNew ? "新建一般 Skill" : `编辑 ${draft.name || draft.id}`;
+      els.editorPath.textContent = draft.path || "保存后写入 skills/<id>/SKILL.md";
+      els.editor.innerHTML = `
+        <div class="form">
+          <section class="section">
+            <h3>基础信息</h3>
+            <div class="grid">
+              <label>ID
+                <input data-field="id" value="${escapeAttr(draft.id || "")}" ${state.isNew ? "" : "disabled"} placeholder="civetweb_audit">
+              </label>
+              <label>Name
+                <input data-field="name" value="${escapeAttr(draft.name || "")}" placeholder="civetweb_audit">
+              </label>
+            </div>
+            <label>Description
+              <input data-field="description" value="${escapeAttr(draft.description || "")}" placeholder="描述这个攻击面覆盖的入口和知识">
+            </label>
+          </section>
+          <section class="section">
+            <h3>SKILL.md 正文</h3>
+            <textarea data-field="body" rows="22">${escapeHtml(draft.body || "")}</textarea>
+          </section>
+          ${state.isNew ? "" : `<section class="section danger-zone"><h3>危险操作</h3><button class="delete-current danger" type="button">删除该 Skill</button><p class="hint">包含脚本或参考资料子文件的 skill 不会被界面直接删除。</p></section>`}
+        </div>`;
+      bindDraftInputs();
+      bindDelete();
+    }
+
+    function renderSpecEditor() {
+      const draft = state.draft;
+      els.editorTitle.textContent = state.isNew ? "新建漏洞类型 YAML" : `编辑 ${draft.name || draft.id}`;
+      els.editorPath.textContent = draft.path || "保存后写入 audit_specs/<id>.yaml";
+      els.editor.innerHTML = `
+        <div class="form">
+          <section class="section">
+            <h3>基础信息</h3>
+            <div class="grid">
+              <label>ID
+                <input data-field="id" value="${escapeAttr(draft.id || "")}" ${state.isNew ? "" : "disabled"} placeholder="command_injection">
+              </label>
+              <label>Name
+                <input data-field="name" value="${escapeAttr(draft.name || "")}" placeholder="command_injection">
+              </label>
+            </div>
+            <p class="hint">YAML 文件只保存 name 和 user_prompt。agent_name、display_name、exploit 策略由程序自动生成。</p>
+          </section>
+          <section class="section">
+            <h3>User Prompt</h3>
+            <textarea data-field="user_prompt" rows="22">${escapeHtml(draft.user_prompt || "")}</textarea>
+          </section>
+          ${state.isNew ? "" : `<section class="section danger-zone"><h3>危险操作</h3><button class="delete-current danger" type="button">删除该漏洞类型</button></section>`}
+        </div>`;
+      bindDraftInputs();
+      bindDelete();
+    }
+
+    function bindDraftInputs() {
+      els.editor.querySelectorAll("[data-field]").forEach(input => {
+        input.addEventListener("input", () => {
+          state.draft[input.dataset.field] = input.value;
+          if (input.dataset.field === "id" && state.isNew) {
+            state.selectedId = input.value;
+          }
+        });
+      });
+    }
+
+    function bindDelete() {
+      document.querySelectorAll(".delete-current").forEach(button => {
+        button.addEventListener("click", deleteCurrent);
+      });
+    }
+
+    async function deleteCurrent() {
+      if (!state.draft || state.isNew || !state.selectedId) return;
+        const label = state.mode === "attack_surfaces" ? "攻击面 Skill" : state.mode === "skills" ? "一般 Skill" : "漏洞类型";
+        if (!confirm(`确认删除 ${label}: ${state.selectedId} ?`)) return;
+        try {
+          const path = state.mode === "attack_surfaces"
+            ? `/api/attack-surface-skills/${encodeURIComponent(state.selectedId)}`
+            : state.mode === "skills"
+              ? `/api/skills/${encodeURIComponent(state.selectedId)}`
+              : `/api/audit-specs/${encodeURIComponent(state.selectedId)}`;
+          await api(path, { method: "DELETE" });
+          showToast("已删除");
+          state.selectedId = null;
+          state.draft = null;
+          await loadState();
+        } catch (error) {
+          showToast(error.message, true);
+        }
+    }
+
+    async function saveCurrent() {
+      if (!state.draft) return;
+      try {
+        const collection = state.mode === "attack_surfaces"
+          ? "/api/attack-surface-skills"
+          : state.mode === "skills"
+            ? "/api/skills"
+            : "/api/audit-specs";
+        const id = state.isNew ? state.draft.id : state.selectedId;
+        const method = state.isNew ? "POST" : "PUT";
+        const path = state.isNew ? collection : `${collection}/${encodeURIComponent(id)}`;
+        const saved = await api(path, { method, body: JSON.stringify(state.draft) });
+        showToast("已保存");
+        state.isNew = false;
+        state.selectedId = saved.id;
+        await loadState();
+        selectItem(saved.id);
+      } catch (error) {
+        showToast(error.message, true);
+      }
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;");
+    }
+
+    function escapeAttr(value) {
+      return escapeHtml(value).replaceAll("'", "&#39;");
+    }
+
+    els.navAttackSurfaces.addEventListener("click", () => setMode("attack_surfaces"));
+    els.navSkills.addEventListener("click", () => setMode("skills"));
+    els.navSpecs.addEventListener("click", () => setMode("specs"));
+    els.newBtn.addEventListener("click", newItem);
+    els.reloadBtn.addEventListener("click", () => loadState().then(() => showToast("已刷新")).catch(error => showToast(error.message, true)));
+    els.deleteTopBtn.addEventListener("click", deleteCurrent);
+    els.saveBtn.addEventListener("click", saveCurrent);
+    els.search.addEventListener("input", () => {
+      state.query = els.search.value;
+      renderList();
+    });
+
+    function clone(value) {
+      return JSON.parse(JSON.stringify(value));
+    }
+
+    loadState().catch(error => {
+      els.items.innerHTML = `<div class="empty">加载失败：${escapeHtml(error.message)}</div>`;
+      showToast(error.message, true);
+    });
+  </script>
+</body>
+</html>

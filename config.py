@@ -10,9 +10,10 @@
 """
 
 import sys
+import json
 from pathlib import Path
 from functools import lru_cache
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -21,41 +22,48 @@ class Config(BaseSettings):
     全局配置类
 
     配置字段说明:
-    - API 配置：base_url, api_key, model_name
-    - 功能开关：enable_lsp, debug
-    - 项目配置：project_path, scan, max_turns, output_dir
+    - Runtime 配置：agent_runtime, opencode_base_url
+    - 功能开关：debug, disable_exploit
+    - 项目配置：project_path, scan, output_dir
     """
 
-    # API 配置
-    base_url: str = Field(
-        default="https://api.anthropic.com/v1",
-        description="API 基础 URL"
+    # Runtime 配置
+    agent_runtime: str = Field(
+        default="codex",
+        description="Agent 内层 runtime：opencode、codex 或 claudecode"
     )
-    api_key: str = Field(
+    opencode_base_url: str = Field(
+        default="http://127.0.0.1:4096",
+        description="opencode serve REST API 地址"
+    )
+    opencode_provider_id: str = Field(
         default="",
-        description="API 密钥"
+        description="opencode providerID；留空则由 opencode 默认配置决定"
     )
-    model_name: str = Field(
-        default="claude-sonnet-4-6",
-        description="模型名称"
-    )
-    deepseek_thinking: str = Field(
-        default="disabled",
-        description="DeepSeek V4 thinking 模式：disabled 或 enabled"
-    )
-    deepseek_reasoning_effort: str = Field(
+    opencode_model_id: str = Field(
         default="",
-        description="DeepSeek thinking 模式推理强度，例如 high 或 max；disabled 时留空"
+        description="opencode modelID；留空走 opencode 默认配置"
+    )
+    opencode_enable_event_stream: bool = Field(
+        default=False,
+        description="启用 opencode /event SSE 监听；默认关闭，使用轮询获取 tool/permission 日志"
+    )
+    external_runtime_timeout_seconds: int = Field(
+        default=1800,
+        description="opencode/codex/claudecode 单次调用超时时间（秒）"
     )
 
-    # 功能开关
-    enable_lsp: bool = Field(
-        default=False,
-        description="启用 LSP 语言服务器"
-    )
     disable_exploit: bool = Field(
         default=False,
         description="禁用 ExploitAgent"
+    )
+    enable_fallback_audit: bool = Field(
+        default=False,
+        description="启用兜底安全审计：已注册漏洞类型完成后，再审计已有类型以外的安全问题"
+    )
+    audit_types: list[str] = Field(
+        default_factory=list,
+        description="额外显式启用的审计类型；攻击面 skill 绑定的 required_audit_types 会始终启用"
     )
     debug: bool = Field(
         default=False,
@@ -78,61 +86,18 @@ class Config(BaseSettings):
         default="",
         description="起始扫描脚本路径"
     )
-    max_turns: int = Field(
-        default=50,
-        description="DeepAgents 基础轮次预算；LangGraph 执行步数上限会结合 max_tool_calls 自动换算"
-    )
-    max_tool_calls: int = Field(
-        default=120,
-        description="单个 DeepAgents runner 允许的最大工具调用次数"
-    )
-    max_repeated_tool_calls: int = Field(
-        default=2,
-        description="同一个工具同一参数允许重复调用的最大次数"
+    attack_surface_skill: str = Field(
+        default="",
+        description="攻击面 skill 名；配置后自动发现该攻击面的 FunctionInfo 列表"
     )
     output_dir: str = Field(
         default="output",
         description="审计报告输出目录"
     )
 
-    # Exploit sandbox 配置
-    exploit_backend: str = Field(
-        default="opensandbox",
-        description="Exploit 执行后端：opensandbox 或 filesystem"
-    )
     target_base_url: str = Field(
         default="http://localhost:8081",
         description="PoC 远程 URL 目标；localhost 仅在 sandbox 内服务可达时有效"
-    )
-    opensandbox_image: str = Field(
-        default="gcc:latest",
-        description="OpenSandbox 使用的容器镜像"
-    )
-    opensandbox_project_dir: str = Field(
-        default="/workspace/project",
-        description="审计项目上传到 sandbox 内的目录"
-    )
-    opensandbox_timeout_seconds: int = Field(
-        default=600,
-        description="OpenSandbox 生命周期超时时间（秒）"
-    )
-    opensandbox_ready_timeout_seconds: int = Field(
-        default=120,
-        description="OpenSandbox 就绪等待时间（秒）"
-    )
-    opensandbox_upload_max_file_mb: int = Field(
-        default=5,
-        description="上传到 OpenSandbox 的单文件大小上限（MB）"
-    )
-    opensandbox_upload_excludes: str = Field(
-        default=".git,.venv,__pycache__,output,audit_output,test_export_dir,.env,.env.local,.env.glm,.env.iflow",
-        description="上传到 OpenSandbox 时排除的路径片段，逗号分隔"
-    )
-
-    # Skills 配置
-    skills_path: str = Field(
-        default="skills",
-        description="Skills 目录路径"
     )
 
     # 命令行参数（用于传递 argparse 解析结果）
@@ -157,6 +122,21 @@ class Config(BaseSettings):
                     kwargs[key] = value
 
         super().__init__(**kwargs)
+
+    @field_validator("audit_types", mode="before")
+    @classmethod
+    def _parse_audit_types(cls, value):
+        if value in (None, "", []):
+            return []
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                return []
+            if stripped.startswith("["):
+                parsed = json.loads(stripped)
+                return parsed
+            return [item.strip() for item in stripped.split(",") if item.strip()]
+        return value
 
 
 def find_env_file() -> Path:

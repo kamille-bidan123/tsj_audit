@@ -1,21 +1,14 @@
-# Tools 模块
-# 自动导入所有工具以完成注册
+"""Project-local helper tools.
 
-from tools.registry import ToolRegistry
-from tools.executor import ToolExecutor
+The project no longer owns a generic tool registry. Agent runtimes
+(Codex/opencode/Claude Code) should connect to standalone MCP servers.
+Local tags helpers are kept for scripts and the tags MCP server.
+"""
 
-# 导入所有工具模块以完成注册
-from tools.file_tool import FileTool
-from tools.tags_tool import TagsTool
-from tools.skills_tool import SkillsTool, load_all_skills, get_skills, get_skill
+from tools.tags_tool import TagsTool, find_refs, go_to_def
 
 __all__ = [
-    "ToolRegistry",
-    "ToolExecutor",
-    "FileTool",
     "TagsTool",
-    "SkillsTool",
-    "load_all_skills",
-    "get_skills",
-    "get_skill",
+    "go_to_def",
+    "find_refs",
 ]

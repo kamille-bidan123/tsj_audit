@@ -5,12 +5,11 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
-    "deepagents>=0.5.7",
-    "deepagents-opensandbox>=1.0.2",
-    "langgraph-cli[inmem]>=0.4.7",
-    "langgraph>=1.1.10",
-    "langchain-openai>=1.2.1",
+    "mcp>=1.12.4",
     "openai>=1.0.0",
     "pydantic>=2.0.0",
     "pydantic-settings>=2.0.0",
+    "pyyaml>=6.0.3",
+    "rich>=14.2.0",
+    "textual>=6.6.0",
 ]

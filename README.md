@@ -1,0 +1,344 @@
+# TSJ Audit
+
+TSJ Audit 是一个面向代码审计的多阶段 AI 工具。它从攻击面入口函数开始，先做代码路径追踪，再按漏洞类型逐类审计，最后可选生成 Exploit/PoC 验证结果。
+
+当前推荐的使用方式是通过 `--attack-surface-skill` 指定一个攻击面 skill，让工具自动发现入口函数并完成后续审计。也可以继续使用 `--scan` 指定扫描脚本或已有 JSON 结果作为入口。
+
+## 审计流程
+
+1. Entry Discovery 阶段
+   - 使用 `--attack-surface-skill` 时启用。
+   - Discovery Agent 注入指定攻击面 skill，输出 `{"functions": FunctionInfo[]}`。
+   - 结果会保存到 `output/discovered_functions.json`，并交给 Trace 阶段继续处理。
+
+2. Trace 阶段
+   - 输入 `FunctionInfo` 列表。
+   - Trace Agent 根据入口函数、源码和 skill 中的外部输入知识，生成代码逻辑说明和 `code_map`。
+
+3. Audit 阶段
+   - 每个漏洞类型仍然单独开启一次对话。
+   - 每次对话可以输出多个 finding，最终合并为多个 `AuditResult`。
+   - 漏洞类型来自 `audit_specs/*.yaml`。
+
+4. Fallback Audit 阶段
+   - 默认关闭。
+   - 显式开启后，在所有正常注册漏洞类型审计完成后，额外开启一次兜底审计。
+   - 兜底类型不是 YAML 中注册的正常类型，运行时动态创建，用于审计已有漏洞类型以外的安全问题。
+
+5. Exploit 阶段
+   - 默认开启，可用 `--disable-exploit` 关闭。
+   - 对高/中置信度的正常审计结果生成 PoC。
+   - Exploit Agent 同样会注入 Function Skill 和攻击面相关 PoC 知识。
+
+## 快速开始
+
+使用攻击面 skill 自动发现入口并审计：
+
+```bash
+uv run python main.py \
+  --project-path /path/to/project \
+  --attack-surface-skill civetweb_audit \
+  --output-dir output
+```
+
+使用扫描脚本或已有 JSON 作为入口：
+
+```bash
+uv run python main.py \
+  --project-path /path/to/project \
+  --scan scripts/scan.py \
+  --output-dir output
+```
+
+断点续审：
+
+```bash
+uv run python main.py --resume --output-dir output
+```
+
+开启兜底审计：
+
+```bash
+uv run python main.py \
+  --project-path /path/to/project \
+  --attack-surface-skill civetweb_audit \
+  --enable-fallback-audit
+```
+
+`--scan` 和 `--attack-surface-skill` 互斥。一次审计应选择一种入口发现方式。
+
+## 配置
+
+配置优先级从高到低：
+
+1. 命令行参数
+2. 当前目录或用户主目录下的 `.env`
+3. 代码默认值
+
+常用配置项：
+
+```env
+agent_runtime = "codex"
+opencode_base_url = "http://127.0.0.1:4096"
+opencode_provider_id = ""
+opencode_model_id = ""
+opencode_enable_event_stream = false
+external_runtime_timeout_seconds = 1800
+
+project_path = "."
+output_dir = "output"
+scan = ""
+attack_surface_skill = ""
+
+disable_exploit = false
+enable_fallback_audit = false
+audit_types = []
+debug = false
+resume = false
+
+target_base_url = "http://localhost:8081"
+```
+
+`agent_runtime` 支持：
+
+- `codex`
+- `opencode`
+- `claudecode`
+
+Entry Discovery、Trace、Audit、Exploit 都通过同一套 runtime factory 创建，因此三个 runtime 都可以参与完整流程。
+
+## 终端界面
+
+在交互式终端中运行 `python3 main.py` 或 `uv run python main.py` 时，工具会启动 Textual TUI：
+
+- 上方显示实时日志，包括 opencode tool call、permission、阶段输出。
+- 底部固定显示当前阶段、当前审计函数、当前漏洞类型、runtime 和 session。
+- 按 `g` 展开/收起已审计函数表，展开后可用鼠标滚轮滚动。
+- opencode 触发 write/edit/patch 等权限请求时，会在界面中高亮显示；按 `o` 批准本次，`a` 永久批准，`r` 拒绝。
+
+如果 stdout/stderr/stdin 不是 TTY，或者未安装 Textual，会自动退回普通日志模式。
+
+## 扩展管理界面
+
+可以启动本地 Web 管理台维护两个可扩展项：
+
+```bash
+uv run python scripts/manage_extensions.py --host 127.0.0.1 --port 8765
+```
+
+打开 `http://127.0.0.1:8765/` 后可以：
+
+- 管理 `skills/attack_surface/*/SKILL.md`：新建、编辑、删除攻击面 skill。
+- 管理 `skills/*/SKILL.md`：新建、编辑、删除一般 skill，自动排除 `skills/attack_surface`。
+- 为攻击面 skill 配置 `required_audit_types`，绑定该攻击面必审的漏洞类型。
+- 管理 `audit_specs/*.yaml`：新建、编辑、删除漏洞类型 YAML。
+- 修改会直接写入当前仓库文件。
+
+删除 skill 时，如果该 skill 目录里还有脚本或参考资料子文件，界面会拒绝删除，避免误删扫描脚本。
+
+## 攻击面 Skill
+
+攻击面 skill 是新流程的核心输入。一个 skill 应覆盖从入口发现到漏洞利用的完整知识，不再需要额外传 `user hint`。
+
+skill 的 frontmatter 可以绑定该攻击面一定要审计的漏洞类型：
+
+```yaml
+---
+name: civetweb_audit
+description: CivetWeb HTTP/WebSocket attack surface
+required_audit_types:
+  - command_injection
+  - path_traversal
+---
+```
+
+审计类型选择规则：
+
+- `required_audit_types`：攻击面 skill 绑定的必审类型，始终启用。
+- `.env audit_types`：额外显式启用的类型，会追加到 skill 绑定类型之后。
+- `FunctionInfo` 不再决定审计类型；Entry Discovery 只负责发现入口函数。
+- 没有任何类型被选中时，正常 Audit 阶段不会运行；如果开启 `enable_fallback_audit`，仍会运行兜底审计。
+
+必需内容：
+
+1. 攻击面发现知识
+   - 可以是文字描述，例如接口注册逻辑、框架路由规则、回调绑定方式。
+   - 也可以附带扫描脚本作为子文件，例如 `skills/attack_surface/civetweb_audit/scripts/scan.py`。
+
+2. 外部输入知识
+   - 描述外部输入从哪些 API、参数、请求体、Header、WebSocket 消息或 RPC 字段进入代码。
+   - Trace 和 Audit 阶段会用它判断 source 和数据流。
+
+3. PoC 生成知识
+   - 描述如何构造请求、命令、协议消息或利用载荷。
+   - Exploit 阶段会用它生成可执行 PoC。
+
+示例目录：
+
+```text
+skills/
+  attack_surface/
+    civetweb_audit/
+      SKILL.md
+      scripts/
+        scan.py
+  rpc_communication/
+    SKILL.md
+```
+
+## FunctionInfo 数据结构
+
+Entry Discovery Agent 的 structured output 顶层必须是 JSON object，避免 Codex/Responses API 拒绝顶层数组 schema：
+
+```json
+{
+  "functions": [
+    {
+      "func_name": "add_user",
+      "file_path": "src/web/user.c",
+      "start_line": 120,
+      "end_line": 188,
+      "code_snippet": "int add_user(...) { ... }",
+      "skill": "civetweb_audit",
+      "input": "reg_cgi"
+    }
+  ]
+}
+```
+
+扫描脚本或最终保存到 `discovered_functions.json` 的结果仍然是 `FunctionInfo` 数组：
+
+```json
+[
+  {
+    "func_name": "add_user",
+    "file_path": "src/web/user.c",
+    "start_line": 120,
+    "end_line": 188,
+    "code_snippet": "int add_user(...) { ... }",
+    "skill": "civetweb_audit",
+    "input": "reg_cgi"
+  }
+]
+```
+
+字段说明：
+
+- `func_name`：入口函数名。
+- `file_path`：入口函数所在文件。
+- `start_line` / `end_line`：入口函数行号范围。
+- `code_snippet`：入口函数代码片段。
+- `skill`：该入口函数应注入的攻击面 skill。
+- `input`：外部输入点标识，兼容历史扫描结果；新流程主要依赖 `skill`。
+
+## Audit Spec
+
+漏洞类型 YAML 现在只需要定制两个字段：
+
+```yaml
+name: command_injection
+user_prompt: |
+  请审计当前入口函数是否存在命令注入问题。
+  重点关注外部输入是否可达命令执行、脚本执行或系统调用。
+```
+
+不再需要配置 `agent_name`、`display_name`、system prompt、Exploit 开关等字段。这些内容会根据 `name` 自动生成。
+
+约束：
+
+- YAML 只能包含 `name` 和 `user_prompt`。
+- `name` 会作为 `AuditResult.vulnerability_type`。
+- `agent_name` 会由 `name` 自动生成，例如 `command_injection_audit`。
+
+## AuditResult 数据结构
+
+Audit 阶段每个漏洞类型一次对话，但一次对话可以返回多个 finding。工具会把每个 finding 转成一个 `AuditResult`：
+
+```json
+{
+  "vulnerability_type": "command_injection",
+  "finding_id": "command_injection_001",
+  "title": "username reaches system command sink",
+  "severity": "high",
+  "is_vulnerable": true,
+  "confidence": "high",
+  "description": "外部输入 username 未经过安全过滤进入命令拼接。",
+  "taint_flow": "HTTP parameter username -> add_user -> system",
+  "recommendation": "避免字符串拼接命令，使用参数化 API 或严格白名单。",
+  "code_map": []
+}
+```
+
+`finding_id`、`title`、`severity` 用于区分同一漏洞类型下的多个独立问题。
+
+## 输出目录
+
+常见输出文件：
+
+```text
+output/
+  audit_config.json
+  discovered_functions.json
+  trace_results_*.json
+  trace_results_*.html
+  trace_results_*.sarif
+  trace_results_*_issues.sarif
+  checkpoints/
+  conversations/
+```
+
+说明：
+
+- `audit_config.json`：本次审计配置快照。
+- `discovered_functions.json`：Entry Discovery 自动发现的入口函数列表。
+- `checkpoints/`：断点续审数据。
+- `conversations/`：各阶段 Agent 对话记录。
+- `trace_results_*.json`：完整结构化审计结果。
+- `trace_results_*.html`：HTML 报告。
+- `trace_results_*.sarif`：SARIF 输出。
+
+## 目录结构
+
+```text
+agents/
+  entry_discovery_agent.py
+  trace_agent.py
+  audit_agent.py
+  exploit_agent.py
+  runtime_factory.py
+  agent_runtime_runner.py
+  audit_specs.py
+  output_schemas.py
+
+audit_specs/
+  command_injection.yaml
+  path_traversal.yaml
+  brute_force.yaml
+  password_reset.yaml
+  loop.yaml
+
+skills/
+  attack_surface/
+    civetweb_audit/
+      SKILL.md
+      scripts/scan.py
+  rpc_communication/
+    SKILL.md
+
+utils/
+  runtime_skills.py
+  structured_output.py
+  export_utils.py
+```
+
+## 开发验证
+
+核心验证脚本：
+
+```bash
+uv run python scripts/verify_entry_discovery.py
+uv run python scripts/verify_agent_runtime_migration.py
+uv run python scripts/verify_multi_finding_audit.py
+uv run python scripts/verify_export_html.py
+uv run python -m compileall agents utils main.py cli.py config.py scripts/verify_entry_discovery.py
+```
