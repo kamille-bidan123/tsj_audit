@@ -1,12 +1,13 @@
 ---
 name: civetweb_audit
-description: Use when auditing CivetWeb HTTP/WebSocket attack surfaces, including handler discovery, external input tracing, vulnerability audit, and safe PoC validation.
+description: Use when auditing CivetWeb HTTP/WebSocket attack surfaces, including
+  handler discovery, external input tracing, vulnerability audit, and safe PoC validation.
 required_audit_types:
-  - command_injection
-  - path_traversal
-  - brute_force
-  - password_reset
-  - loop
+- command_injection
+- path_traversal
+- brute_force
+- password_reset
+- loop
 ---
 
 # CivetWeb Audit Skill
@@ -28,7 +29,7 @@ required_audit_types:
 
 1. 字符串参数通常是 route。
 2. 函数指针参数通常是 callback。
-3. callback 的真实函数定义是 `FunctionInfo` 入口。
+3. callback 的真实函数定义是 `EntrySpec` 入口。
 4. 找不到真实函数定义、行号或代码片段的候选不要输出。
 
 ### C++ Handler
@@ -49,17 +50,17 @@ required_audit_types:
 
 `handleMessage` 的 `data` 和 `len` 是客户端可控输入。
 
-### FunctionInfo 输出要求
+### EntrySpec 输出要求
 
 每个入口必须输出：
 
 - `func_name`
 - `file_path`
-- `start_line`
-- `end_line`
-- `code_snippet`
+- `start_line`（如果可以定位，强烈建议输出）
 - `skill: "civetweb_audit"`
 
+C++ 成员函数名尽量使用 `ClassName::methodName`，例如 `UrlApiHandler::handlePost`。
+不要输出 `end_line`、`code_snippet` 或外部输入字段；Trace Agent 会让 runtime 根据源码补齐上下文。
 不要输出 Markdown，不要输出解释文字，只返回包含 `functions` 字段的 JSON object。
 
 ## 外部输入知识

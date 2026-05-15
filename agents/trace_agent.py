@@ -9,11 +9,11 @@ Trace Agent - 代码污点追踪审计 Agent
 import sys
 import json
 import importlib.util
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Union
 from pathlib import Path
 from datetime import datetime
 # 导入共享模型
-from models import FunctionInfo, CodeContext, TraceResult, AuditResult
+from models import EntrySpec, FunctionInfo, CodeContext, TraceResult, AuditResult
 from utils.export_utils import merge_checkpoints_and_export
 
 
@@ -49,7 +49,7 @@ class TraceAgent:
         self.on_log = on_log or (lambda x: None)
 
         self._input_knowledge: Optional[str] = None
-        self._scan_results: Optional[List[FunctionInfo]] = None
+        self._scan_results: Optional[List[Union[EntrySpec, FunctionInfo]]] = None
 
     def _log(self, message: str) -> None:
         """输出日志到 stderr 和 TUI"""
@@ -160,71 +160,78 @@ class TraceAgent:
 
         return checkpoints
 
-    def load_scan_results(self, scan_path: str, code_path: Optional[str] = None) -> List[FunctionInfo]:
-        """加载 JSON 文件扫描结果"""
+    def load_entry_results(self, entry_path: str, code_path: Optional[str] = None) -> List[EntrySpec]:
+        """加载 EntrySpec JSON 入口结果。"""
+        if code_path is None:
+            code_path = self.project_path
+
+        path = Path(entry_path)
+
+        if not path.exists():
+            raise FileNotFoundError(f"未找到 EntrySpec JSON 文件: {path}")
+        if path.suffix.lower() != ".json":
+            raise ValueError(f"--entry 只接受 JSON 文件: {path}")
+
+        with open(path, 'r', encoding='utf-8') as f:
+            raw_data = json.load(f)
+
+        if not isinstance(raw_data, list):
+            raise ValueError(f"JSON 文件内容不是列表格式: {path}")
+
+        results: list[EntrySpec] = []
+        for idx, item in enumerate(raw_data):
+            if isinstance(item, dict):
+                try:
+                    results.append(EntrySpec(**item))
+                except Exception as e:
+                    raise ValueError(f"JSON 文件中第 {idx+1} 项不是有效的 EntrySpec: {str(e)}")
+            elif isinstance(item, EntrySpec):
+                results.append(item)
+            else:
+                raise ValueError(f"JSON 文件中第 {idx+1} 项既不是字典也不是 EntrySpec 对象")
+
+        self._scan_results = results
+        return results
+
+    def load_scan_results(self, scan_path: str, code_path: Optional[str] = None) -> List[EntrySpec]:
+        """执行扫描脚本并加载 EntrySpec 结果。"""
         if code_path is None:
             code_path = self.project_path
 
         scan_path = Path(scan_path)
 
         if not scan_path.exists():
-            raise FileNotFoundError(f"未找到扫描结果文件: {scan_path}")
+            raise FileNotFoundError(f"未找到 scan.py: {scan_path}")
+        if scan_path.suffix.lower() == ".json":
+            raise ValueError("--scan 只接受扫描脚本；JSON 入口请使用 --entry")
 
-        # 检查是否是 JSON 文件
-        if scan_path.suffix.lower() == '.json':
-            # 读取 JSON 文件
-            with open(scan_path, 'r', encoding='utf-8') as f:
-                raw_data = json.load(f)
+        spec = importlib.util.spec_from_file_location("scan_module", scan_path)
+        scan_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(scan_module)
 
-            # 验证数据结构是否为 FunctionInfo 的列表
-            if not isinstance(raw_data, list):
-                raise ValueError(f"JSON 文件内容不是列表格式: {scan_path}")
+        if self.debug:
+            print(
+                f"[TraceAgent] 执行扫描：{scan_path} {code_path}", file=sys.stderr)
 
-            results = []
-            for idx, item in enumerate(raw_data):
-                if isinstance(item, dict):
-                    # 验证字典是否符合 FunctionInfo 结构
-                    try:
-                        function_info = FunctionInfo(**item)
-                        results.append(function_info)
-                    except Exception as e:
-                        raise ValueError(f"JSON 文件中第 {idx+1} 项不是有效的 FunctionInfo 结构: {str(e)}")
-                elif isinstance(item, FunctionInfo):
-                    # 已经是 FunctionInfo 对象
-                    results.append(item)
-                else:
-                    raise ValueError(f"JSON 文件中第 {idx+1} 项既不是字典也不是 FunctionInfo 对象")
-        else:
-            # 兼容旧的 Python 模块方式（如果需要的话）
-            if not scan_path.exists():
-                raise FileNotFoundError(f"未找到 scan.py: {scan_path}")
-
-            spec = importlib.util.spec_from_file_location("scan_module", scan_path)
-            scan_module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(scan_module)
-
-            if self.debug:
-                print(
-                    f"[TraceAgent] 执行扫描：{scan_path} {code_path}", file=sys.stderr)
-
-            raw_results = scan_module.scan_directory(code_path)
-
-            # 将字典转换为 FunctionInfo 对象
-            results = []
-            for item in raw_results:
-                if isinstance(item, dict):
-                    # 字典转 FunctionInfo
-                    results.append(FunctionInfo(**item))
-                else:
-                    # 已经是 FunctionInfo 对象
-                    results.append(item)
+        raw_results = scan_module.scan_directory(code_path)
+        results: list[EntrySpec] = []
+        for idx, item in enumerate(raw_results):
+            if isinstance(item, dict):
+                try:
+                    results.append(EntrySpec(**item))
+                except Exception as e:
+                    raise ValueError(f"扫描脚本返回第 {idx+1} 项不是有效的 EntrySpec: {str(e)}")
+            elif isinstance(item, EntrySpec):
+                results.append(item)
+            else:
+                raise ValueError(f"扫描脚本返回第 {idx+1} 项不是 EntrySpec")
 
         self._scan_results = results
         return results
 
     def audit_function(
         self,
-        func_info: FunctionInfo,
+        func_info: Union[EntrySpec, FunctionInfo],
     ) -> TraceResult:
         """
         审计单个函数
@@ -236,12 +243,12 @@ class TraceAgent:
         """
         from agents.runtime_factory import create_trace_explorer
 
-        code_logic, code_map, messages = create_trace_explorer(self).run(func_info)
-        audit_results, exploit_results = self._audit_codemap(func_info, code_map)
-        self._save_conversation_history("trace_agent", func_info, messages)
+        hydrated_func_info, code_logic, code_map, messages = create_trace_explorer(self).run(func_info)
+        audit_results, exploit_results = self._audit_codemap(hydrated_func_info, code_map)
+        self._save_conversation_history("trace_agent", hydrated_func_info, messages)
 
         return TraceResult(
-            function_info=func_info,
+            function_info=hydrated_func_info,
             code_logic=code_logic,
             code_map=code_map,
             audit_results=audit_results,
@@ -281,7 +288,8 @@ class TraceAgent:
 
     def audit_all(
         self,
-        scan_path,
+        scan_path: Optional[str] = None,
+        entry_path: Optional[str] = None,
         code_path: Optional[str] = None,
         output_dir: Optional[str] = None,
         resume: bool = False,
@@ -301,8 +309,15 @@ class TraceAgent:
         # 设置输出目录，以便后续保存对话历史
         self.output_dir = output_dir
 
-        # 加载扫描结果
-        scan_results = self.load_scan_results(scan_path, code_path)
+        if bool(scan_path) == bool(entry_path):
+            raise ValueError("必须且只能指定 scan_path 或 entry_path 之一")
+
+        # 加载入口结果
+        scan_results = (
+            self.load_scan_results(scan_path, code_path)
+            if scan_path
+            else self.load_entry_results(entry_path, code_path)
+        )
         self.on_functions_loaded(scan_results)
 
         self._log(f"[TraceAgent] 找到 {len(scan_results)} 个接口函数")
@@ -338,7 +353,8 @@ class TraceAgent:
                 continue
 
             # 新审计未完成的函数
-            self._log(f"[TraceAgent] 开始函数：{func_name} @ {func_info.file_path}:{func_info.start_line}")
+            entry_line = func_info.start_line if getattr(func_info, "start_line", None) is not None else "?"
+            self._log(f"[TraceAgent] 开始函数：{func_name} @ {func_info.file_path}:{entry_line}")
 
             # 通知开始审计
             self.on_function_start(func_info)
@@ -346,7 +362,7 @@ class TraceAgent:
             result = self.audit_function(func_info)
 
             # 通知完成审计
-            self.on_function_complete(func_info)
+            self.on_function_complete(result.function_info)
             self._log(f"[TraceAgent] 完成函数：{func_name}")
 
             # 保存检查点

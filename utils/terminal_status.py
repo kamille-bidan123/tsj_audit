@@ -6,7 +6,10 @@ from __future__ import annotations
 
 import sys
 import threading
+import traceback
 from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
 from typing import Any, Callable, Optional
 
 from rich.text import Text
@@ -161,8 +164,9 @@ class AuditStatusApp(App):
         try:
             self.target()
         except BaseException as exc:
-            self.owner._target_error = exc
-            self.owner.log(f"[bold red]运行失败:[/bold red] {exc!r}")
+            log_path = self.owner._capture_target_error(exc)
+            detail = f"；完整 traceback: {log_path}" if log_path else ""
+            self.owner.log(f"[bold red]运行失败:[/bold red] {exc!r}{detail}")
         finally:
             sys.stdout.flush()
             sys.stderr.flush()
@@ -274,6 +278,8 @@ class TerminalStatus:
         self.lock = threading.RLock()
         self._app_ready = threading.Event()
         self._target_error: BaseException | None = None
+        self._target_traceback = ""
+        self._target_error_log_path: Path | None = None
         self.stage = "启动"
         self.function_name = "-"
         self.audit_type = "-"
@@ -300,6 +306,10 @@ class TerminalStatus:
             self.app = None
             self._app_ready.clear()
         if self._target_error is not None:
+            if self._target_traceback:
+                print(self._target_traceback, file=sys.stderr, flush=True)
+            if self._target_error_log_path:
+                print(f"[错误] 完整异常日志: {self._target_error_log_path}", file=sys.stderr, flush=True)
             raise self._target_error
 
     def start(self) -> None:
@@ -312,6 +322,32 @@ class TerminalStatus:
                 self.app.call_from_thread(self.app.exit)
             except Exception:
                 pass
+
+    def _capture_target_error(self, exc: BaseException) -> Path | None:
+        self._target_error = exc
+        self._target_traceback = traceback.format_exc()
+        self._target_error_log_path = self._write_target_error_log(self._target_traceback)
+        return self._target_error_log_path
+
+    def _write_target_error_log(self, traceback_text: str) -> Path | None:
+        try:
+            from config import get_config
+
+            output_dir = Path(get_config().output_dir or ".")
+        except Exception:
+            output_dir = Path(".")
+
+        try:
+            output_dir.mkdir(parents=True, exist_ok=True)
+            log_path = output_dir / "tui_error.log"
+            timestamp = datetime.now().isoformat(timespec="seconds")
+            log_path.write_text(
+                f"[{timestamp}] TUI target failed\n{traceback_text}",
+                encoding="utf-8",
+            )
+            return log_path
+        except OSError:
+            return None
 
     def pause_input(self) -> None:
         # Textual owns input; permission prompts are handled by key bindings.

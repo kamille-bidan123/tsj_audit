@@ -19,7 +19,7 @@ from agents.output_schemas import AuditOutput, TraceOutput
 import agents.runtime_factory as runtime_factory
 from agents.trace_agent import TraceAgent
 from config import get_config, init_settings
-from models import AuditResult, CodeContext, ExploitResult, FunctionInfo
+from models import AuditResult, CodeContext, EntrySpec, ExploitResult, FunctionInfo
 from utils.structured_output import extract_structured_model
 from utils.runtime_skills import ensure_runtime_skill, runtime_skill_base_dir
 
@@ -71,7 +71,6 @@ def build_fake_audit_inputs() -> tuple[FunctionInfo, List[CodeContext]]:
         start_line=10,
         end_line=20,
         code_snippet="int handle_test() { return 0; }",
-        input="mg_get_var",
         skill="civetweb_audit",
     )
     code_map = [
@@ -82,19 +81,32 @@ def build_fake_audit_inputs() -> tuple[FunctionInfo, List[CodeContext]]:
             line_end=func_info.end_line,
             code_snippet=func_info.code_snippet,
             is_entry_point=True,
-            taint_source=func_info.input,
+            taint_source=func_info.skill,
             taint_path="fake source -> fake sink",
         )
     ]
     return func_info, code_map
 
 
+def fake_function_info_dict() -> dict:
+    return build_fake_audit_inputs()[0].model_dump()
+
+
 def verify_trace_agent_pipeline() -> None:
     func_info, _ = build_fake_audit_inputs()
 
     class FakeExplorer:
-        def run(self, func_info: FunctionInfo):
+        def run(self, entry: EntrySpec):
+            func_info = FunctionInfo(
+                func_name=entry.func_name,
+                file_path=entry.file_path,
+                start_line=entry.start_line or 10,
+                end_line=20,
+                code_snippet="int handle_test() { return 0; }",
+                skill=entry.skill,
+            )
             return (
+                func_info,
                 "fake code logic",
                 [
                     CodeContext(
@@ -104,7 +116,7 @@ def verify_trace_agent_pipeline() -> None:
                         line_end=func_info.end_line,
                         code_snippet=func_info.code_snippet,
                         is_entry_point=True,
-                        taint_source=func_info.input,
+                        taint_source=func_info.skill,
                         taint_path="fake source -> fake sink",
                     )
                 ],
@@ -115,7 +127,14 @@ def verify_trace_agent_pipeline() -> None:
     runtime_factory.create_trace_explorer = lambda _trace_agent: FakeExplorer()
     try:
         fake_agent = FakeTraceAgent()
-        result = fake_agent.audit_function(func_info)
+        result = fake_agent.audit_function(
+            EntrySpec(
+                func_name=func_info.func_name,
+                file_path=func_info.file_path,
+                start_line=func_info.start_line,
+                skill=func_info.skill,
+            )
+        )
     finally:
         runtime_factory.create_trace_explorer = original_create_trace_explorer
 
@@ -288,6 +307,7 @@ def verify_agent_runtime_structured_output_parsing() -> None:
         {
             "info": {
                 "structured_output": {
+                    "function_info": fake_function_info_dict(),
                     "code_logic": "parsed from agent runtime",
                     "code_map": [
                         {
@@ -719,6 +739,7 @@ def verify_opencode_runtime_uses_current_api_and_reports_bad_json() -> None:
             "info": {
                 "role": "assistant",
                 "structured": {
+                    "function_info": fake_function_info_dict(),
                     "code_logic": "ok",
                     "code_map": [],
                 },
@@ -736,7 +757,13 @@ def verify_opencode_runtime_uses_current_api_and_reports_bad_json() -> None:
             "parts": [
                 {
                     "type": "text",
-                    "text": '{"code_logic":"from text","code_map":[]}',
+                    "text": json.dumps(
+                        {
+                            "function_info": fake_function_info_dict(),
+                            "code_logic": "from text",
+                            "code_map": [],
+                        }
+                    ),
                 }
             ],
         },

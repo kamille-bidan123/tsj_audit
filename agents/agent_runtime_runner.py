@@ -6,14 +6,14 @@ from __future__ import annotations
 
 import json
 import sys
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from pydantic import ValidationError
 
 from agents.output_schemas import AuditOutput, EntryDiscoveryOutput, ExploitOutput, TraceOutput
 from agents.prompt import EXPLORATION_SYSTEM_PROMPT, build_exploration_user_message
 from agents.runtime_clients import AgentRuntimeClient
-from models import AuditResult, CodeContext, ExploitResult, FunctionInfo
+from models import AuditResult, CodeContext, EntrySpec, ExploitResult, FunctionInfo
 from utils.runtime_skills import build_attack_surface_skill_usage_prompt, build_skill_usage_prompt
 from utils.terminal_status import get_terminal_status
 
@@ -36,7 +36,7 @@ class AgentRuntimeEntryDiscoveryRunner:
         self.debug = debug
         self.output_dir = output_dir
 
-    def run(self) -> List[FunctionInfo]:
+    def run(self) -> List[EntrySpec]:
         get_terminal_status().set_stage("Entry Discovery", function_name="-", audit_type="-")
         print(
             f"[EntryDiscovery] runtime={self.runtime} skill={self.attack_surface_skill} 开始",
@@ -59,7 +59,7 @@ class AgentRuntimeEntryDiscoveryRunner:
         )
         return entries
 
-    def _normalize_entries(self, entries: List[FunctionInfo]) -> List[FunctionInfo]:
+    def _normalize_entries(self, entries: List[EntrySpec]) -> List[EntrySpec]:
         normalized = []
         for entry in entries:
             if entry.skill != self.attack_surface_skill:
@@ -82,13 +82,14 @@ class AgentRuntimeEntryDiscoveryRunner:
 - skill 必须包含：攻击面发现知识、外部输入知识、PoC 生成知识。
 - 本阶段只输出包含 functions 字段的 JSON object，不做漏洞审计，不输出 Markdown。
 - 必须根据 skill 的“攻击面发现知识”搜索源码中的注册点、回调、handler 或入口函数。
-- 每个 FunctionInfo 必须来自真实源码，包含 func_name、file_path、start_line、end_line、code_snippet。
-- 每个 FunctionInfo.skill 必须设置为 `{self.attack_surface_skill}`。
-- 找不到真实函数定义、行号或代码片段的候选不要输出。
+- 每个入口输出轻量 EntrySpec：func_name、file_path、skill；如果可以定位，尽量包含 start_line。
+- 每个 EntrySpec.skill 必须设置为 `{self.attack_surface_skill}`。
+- C++ 成员函数名必须尽量使用 ClassName::methodName，避免同名 handle 方法混淆。
+- 找不到真实函数或文件的候选不要输出。
 - 不要编造入口函数；没有发现入口时返回 {{"functions": []}}。"""
 
     def _user_prompt(self) -> str:
-        return "请根据 attack surface skill 自动发现该攻击面的所有接口入口函数，并返回 JSON object：{\"functions\": FunctionInfo[]}。"
+        return "请根据 attack surface skill 自动发现该攻击面的所有接口入口函数，并返回 JSON object：{\"functions\": EntrySpec[]}。"
 
 
 class AgentRuntimeTraceExplorer:
@@ -98,14 +99,14 @@ class AgentRuntimeTraceExplorer:
         self.trace_agent = trace_agent
         self.runtime = runtime
 
-    def run(self, func_info: FunctionInfo) -> tuple[str, List[CodeContext], List[Dict[str, Any]]]:
+    def run(self, entry: Union[EntrySpec, FunctionInfo]) -> tuple[FunctionInfo, str, List[CodeContext], List[Dict[str, Any]]]:
         from config import get_config
 
         config = get_config()
         log = getattr(self.trace_agent, "_log", None)
         if callable(log):
-            log(f"[TraceRuntime] runtime={self.runtime} 开始 trace: {func_info.func_name}")
-        get_terminal_status().set_stage("Trace", function_name=func_info.func_name, audit_type="-")
+            log(f"[TraceRuntime] runtime={self.runtime} 开始 trace: {entry.func_name}")
+        get_terminal_status().set_stage("Trace", function_name=entry.func_name, audit_type="-")
         client = AgentRuntimeClient(
             self.runtime,
             project_path=config.project_path,
@@ -114,21 +115,23 @@ class AgentRuntimeTraceExplorer:
         try:
             output, messages = client.run_json(
                 stage_name="trace",
-                system_prompt=self._system_prompt(func_info, project_path=config.project_path),
+                system_prompt=self._system_prompt(entry, project_path=config.project_path),
                 user_prompt=self._user_prompt(),
                 output_model=TraceOutput,
             )
         except (RuntimeError, ValidationError) as exc:
-            return self._fallback(func_info, exc)
+            return self._fallback(entry, exc)
         trace_output = TraceOutput.model_validate(output)
         if callable(log):
-            log(f"[TraceRuntime] runtime={self.runtime} 完成 trace: {func_info.func_name}")
-        return trace_output.code_logic, trace_output.code_map, messages
+            log(f"[TraceRuntime] runtime={self.runtime} 完成 trace: {trace_output.function_info.func_name}")
+        return trace_output.function_info, trace_output.code_logic, trace_output.code_map, messages
 
-    def _fallback(self, func_info: FunctionInfo, exc: Exception):
+    def _fallback(self, entry: Union[EntrySpec, FunctionInfo], exc: Exception):
         message = f"{self.runtime} trace runtime failed: {exc}"
         self._log_runtime_failure(message)
+        func_info = self._fallback_function_info(entry)
         return (
+            func_info,
             message,
             [
                 CodeContext(
@@ -138,7 +141,7 @@ class AgentRuntimeTraceExplorer:
                     line_end=func_info.end_line,
                     code_snippet=func_info.code_snippet,
                     is_entry_point=True,
-                    taint_source=func_info.skill or func_info.input or "unknown",
+                    taint_source=func_info.skill or "unknown",
                     taint_path=f"{self.runtime} runtime failed; entry context only.",
                 )
             ],
@@ -152,36 +155,56 @@ class AgentRuntimeTraceExplorer:
         else:
             print(f"[{self.runtime}] {message}", file=sys.stderr)
 
-    def _system_prompt(self, func_info: FunctionInfo, *, project_path: str) -> str:
+    def _fallback_function_info(self, entry: Union[EntrySpec, FunctionInfo]) -> FunctionInfo:
+        if isinstance(entry, FunctionInfo):
+            return entry
+        start_line = entry.start_line or 1
+        return FunctionInfo(
+            func_name=entry.func_name,
+            file_path=entry.file_path,
+            start_line=start_line,
+            end_line=start_line,
+            code_snippet="",
+            skill=entry.skill,
+        )
+
+    def _system_prompt(self, entry: Union[EntrySpec, FunctionInfo], *, project_path: str) -> str:
         skill_prompt = build_skill_usage_prompt(
-            func_info,
+            self._fallback_function_info(entry),
             runtime=self.runtime,
             project_path=project_path,
         )
+        entry_json = json.dumps(entry.model_dump(exclude_none=True), ensure_ascii=False, indent=2)
+        entry_kind = "FunctionInfo" if isinstance(entry, FunctionInfo) else "EntrySpec"
         return f"""{EXPLORATION_SYSTEM_PROMPT}
 
-## Trace FunctionInfo
-- 函数名：{func_info.func_name}
-- 文件：{func_info.file_path}
-- 行号：{func_info.start_line}-{func_info.end_line}
-- Function Skill：{func_info.skill or "未指定"}
+## Trace Entry
+当前输入类型：{entry_kind}
 
-### Entry Code
-```c
-{func_info.code_snippet}
+```json
+{entry_json}
 ```
+
+## FunctionInfo 补齐要求
+你必须先根据 Trace Entry 和项目源码补齐完整 FunctionInfo，并在最终 JSON 的 `function_info` 字段返回。
+
+补齐规则：
+1. 如果 EntrySpec 的 `file_path + start_line` 指向入口函数体开头：读取该文件，从该函数开始处向后查看，确认函数结束位置，补齐 `end_line` 和完整 `code_snippet`。
+2. 如果 EntrySpec 的 `file_path + start_line` 指向回调/handler/route 注册位置：先读取该注册点，识别真实 callback 或 handler 函数，再在项目中查找它的定义位置，补齐真实入口函数的 `file_path`、`start_line`、`end_line` 和完整 `code_snippet`。
+3. 如果输入已经是完整 FunctionInfo，也要核对源码；若发现行号或片段不一致，以项目源码为准输出修正后的 `function_info`。
+4. `function_info.skill` 必须保留 Entry 中的 skill。不要输出 input 字段。
 
 {skill_prompt}
 
 ## Trace Field Injection Rules
-- 所有 FunctionInfo、代码片段、skill 路径等字段只在本 system prompt 中注入。
-- user task 不包含任何 FunctionInfo 字段，必须以本 system prompt 为准。
+- 所有 EntrySpec、FunctionInfo、代码片段、skill 路径等字段只在本 system prompt 中注入。
+- user task 不包含任何入口字段，必须以本 system prompt 为准。
 - 具体 taint_source 必须来自当前代码里的变量、参数或 API 调用，不要把 skill 文档当成污染源。"""
 
     def _user_prompt(self) -> str:
         return (
             f"{build_exploration_user_message()}\n\n"
-            "请读取项目源码并输出 code_logic/code_map。"
+            "请读取项目源码，先补齐 function_info，再基于补齐后的入口输出 code_logic/code_map。"
         )
 
 

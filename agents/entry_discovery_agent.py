@@ -7,7 +7,7 @@ from __future__ import annotations
 from typing import List
 
 from agents.runtime_factory import create_entry_discovery_runner
-from models import FunctionInfo
+from models import EntrySpec
 
 
 class EntryDiscoveryAgent:
@@ -26,7 +26,7 @@ class EntryDiscoveryAgent:
         self.debug = debug
         self.output_dir = output_dir
 
-    def discover(self) -> List[FunctionInfo]:
+    def discover(self) -> List[EntrySpec]:
         return create_entry_discovery_runner(
             attack_surface_skill=self.attack_surface_skill,
             project_path=self.project_path,

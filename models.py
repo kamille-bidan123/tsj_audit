@@ -9,11 +9,25 @@
 from __future__ import annotations
 
 from typing import Optional, List
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
+
+
+class EntrySpec(BaseModel):
+    """轻量入口描述，由发现阶段或用户维护的 JSON 提供。"""
+    model_config = ConfigDict(extra="forbid")
+
+    func_name: str
+    file_path: str
+    # 当前入口函数需要使用的审计知识 skill，如 "civetweb_audit"。
+    skill: Optional[str] = None
+    # 可选定位提示。C++ 同名 handler 较多时建议提供。
+    start_line: Optional[int] = None
 
 
 class FunctionInfo(BaseModel):
-    """回调函数信息"""
+    """补齐源码上下文后的入口函数信息"""
+    model_config = ConfigDict(extra="forbid")
+
     func_name: str
     file_path: str
     start_line: int
@@ -21,10 +35,6 @@ class FunctionInfo(BaseModel):
     code_snippet: str
     # 当前入口函数需要使用的审计知识 skill，如 "civetweb_audit"。
     skill: Optional[str] = None
-    # 外部输入点标识（如 "mg_get_var", "mg_websocket_accept" 等）
-    # 本质是知识文档的引用，标识这个函数的外部输入来源
-    # 兼容历史扫描结果；新流程应使用 skill 选择知识库。
-    input: str = ""
 
 
 class CodeContext(BaseModel):

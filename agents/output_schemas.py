@@ -8,21 +8,22 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
-from models import CodeContext, FunctionInfo
+from models import CodeContext, EntrySpec, FunctionInfo
 
 
 class EntryDiscoveryOutput(BaseModel):
     """Structured output expected from attack-surface entry discovery."""
 
-    functions: List[FunctionInfo] = Field(
+    functions: List[EntrySpec] = Field(
         default_factory=list,
-        description="自动发现的攻击面入口函数列表",
+        description="自动发现的轻量攻击面入口函数列表",
     )
 
 
 class TraceOutput(BaseModel):
     """Structured output expected from trace exploration."""
 
+    function_info: FunctionInfo = Field(description="根据 EntrySpec 和源码补齐后的完整入口函数信息")
     code_logic: str = Field(description="函数的业务逻辑描述")
     code_map: List[CodeContext] = Field(description="所有被污染的函数调用链上下文")
 

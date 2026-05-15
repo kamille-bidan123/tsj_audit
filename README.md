@@ -2,18 +2,18 @@
 
 TSJ Audit 是一个面向代码审计的多阶段 AI 工具。它从攻击面入口函数开始，先做代码路径追踪，再按漏洞类型逐类审计，最后可选生成 Exploit/PoC 验证结果。
 
-当前推荐的使用方式是通过 `--attack-surface-skill` 指定一个攻击面 skill，让工具自动发现入口函数并完成后续审计。也可以继续使用 `--scan` 指定扫描脚本或已有 JSON 结果作为入口。
+当前推荐的使用方式是通过 `--attack-surface-skill` 指定一个攻击面 skill，让工具自动发现入口函数并完成后续审计。也可以使用 `--scan` 指定扫描脚本，或使用 `--entry` 指定 EntrySpec JSON 作为入口。
 
 ## 审计流程
 
 1. Entry Discovery 阶段
    - 使用 `--attack-surface-skill` 时启用。
-   - Discovery Agent 注入指定攻击面 skill，输出 `{"functions": FunctionInfo[]}`。
+   - Discovery Agent 注入指定攻击面 skill，输出 `{"functions": EntrySpec[]}`。
    - 结果会保存到 `output/discovered_functions.json`，并交给 Trace 阶段继续处理。
 
 2. Trace 阶段
-   - 输入 `FunctionInfo` 列表。
-   - Trace Agent 根据入口函数、源码和 skill 中的外部输入知识，生成代码逻辑说明和 `code_map`。
+   - JSON 输入必须是 `EntrySpec` 列表。
+   - Trace Agent 先让 runtime 根据入口描述和源码补齐 `FunctionInfo`，再根据 skill 中的外部输入知识生成代码逻辑说明和 `code_map`。
 
 3. Audit 阶段
    - 每个漏洞类型仍然单独开启一次对话。
@@ -41,12 +41,21 @@ uv run python main.py \
   --output-dir output
 ```
 
-使用扫描脚本或已有 JSON 作为入口：
+使用扫描脚本作为入口：
 
 ```bash
 uv run python main.py \
   --project-path /path/to/project \
   --scan scripts/scan.py \
+  --output-dir output
+```
+
+使用 EntrySpec JSON 作为入口：
+
+```bash
+uv run python main.py \
+  --project-path /path/to/project \
+  --entry entries.json \
   --output-dir output
 ```
 
@@ -65,7 +74,7 @@ uv run python main.py \
   --enable-fallback-audit
 ```
 
-`--scan` 和 `--attack-surface-skill` 互斥。一次审计应选择一种入口发现方式。
+`--scan`、`--entry` 和 `--attack-surface-skill` 互斥。一次审计应选择一种入口发现方式。
 
 ## 配置
 
@@ -88,6 +97,7 @@ external_runtime_timeout_seconds = 1800
 project_path = "."
 output_dir = "output"
 scan = ""
+entry = ""
 attack_surface_skill = ""
 
 disable_exploit = false
@@ -186,9 +196,9 @@ skills/
     SKILL.md
 ```
 
-## FunctionInfo 数据结构
+## EntrySpec / FunctionInfo 数据结构
 
-Entry Discovery Agent 的 structured output 顶层必须是 JSON object，避免 Codex/Responses API 拒绝顶层数组 schema：
+Entry Discovery Agent 输出轻量 `EntrySpec`。structured output 顶层必须是 JSON object，避免 Codex/Responses API 拒绝顶层数组 schema：
 
 ```json
 {
@@ -197,16 +207,13 @@ Entry Discovery Agent 的 structured output 顶层必须是 JSON object，避免
       "func_name": "add_user",
       "file_path": "src/web/user.c",
       "start_line": 120,
-      "end_line": 188,
-      "code_snippet": "int add_user(...) { ... }",
-      "skill": "civetweb_audit",
-      "input": "reg_cgi"
+      "skill": "civetweb_audit"
     }
   ]
 }
 ```
 
-扫描脚本或最终保存到 `discovered_functions.json` 的结果仍然是 `FunctionInfo` 数组：
+手工维护的 `--entry` JSON 或最终保存到 `discovered_functions.json` 的结果必须是轻量 `EntrySpec` 数组。Trace Agent 会把该入口描述交给 runtime，让 LLM 读取源码补齐 `end_line` 和 `code_snippet`，再转换为内部 `FunctionInfo`：
 
 ```json
 [
@@ -214,10 +221,7 @@ Entry Discovery Agent 的 structured output 顶层必须是 JSON object，避免
     "func_name": "add_user",
     "file_path": "src/web/user.c",
     "start_line": 120,
-    "end_line": 188,
-    "code_snippet": "int add_user(...) { ... }",
-    "skill": "civetweb_audit",
-    "input": "reg_cgi"
+    "skill": "civetweb_audit"
   }
 ]
 ```
@@ -226,10 +230,10 @@ Entry Discovery Agent 的 structured output 顶层必须是 JSON object，避免
 
 - `func_name`：入口函数名。
 - `file_path`：入口函数所在文件。
-- `start_line` / `end_line`：入口函数行号范围。
-- `code_snippet`：入口函数代码片段。
+- `start_line`：可选但强烈建议提供，用于区分同名函数或 C++ handler。
 - `skill`：该入口函数应注入的攻击面 skill。
-- `input`：外部输入点标识，兼容历史扫描结果；新流程主要依赖 `skill`。
+
+`FunctionInfo` 是内部完整结构，包含 `start_line`、`end_line`、`code_snippet` 和 `skill`。`EntrySpec` 和 `FunctionInfo` 都不再包含 `input` 字段；外部输入知识由攻击面 skill 提供。
 
 ## Audit Spec
 

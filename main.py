@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from cli import parse_args
 from config import Config
-from models import FunctionInfo
+from models import EntrySpec
 from utils.terminal_status import get_terminal_status
 
 
@@ -45,14 +45,22 @@ def save_config(output_dir: str, config: Config):
 
 
 def discover_attack_surface_entries(config: Config) -> str:
-    """Discover FunctionInfo entries from attack_surface_skill and save them as JSON."""
+    """Discover EntrySpec entries from attack_surface_skill and save them as JSON."""
     from agents.entry_discovery_agent import EntryDiscoveryAgent
 
-    if config.scan and config.attack_surface_skill:
-        raise ValueError("--scan 和 --attack-surface-skill 不能同时使用，请二选一")
+    configured_sources = [
+        name
+        for name, value in (
+            ("--scan", config.scan),
+            ("--entry", config.entry),
+            ("--attack-surface-skill", config.attack_surface_skill),
+        )
+        if value
+    ]
+    if len(configured_sources) > 1:
+        raise ValueError(f"{'、'.join(configured_sources)} 不能同时使用，请三选一")
     if not config.attack_surface_skill:
-        log(f"[入口] 使用 scan 输入: {config.scan}")
-        return config.scan
+        return ""
 
     discovered_file = Path(config.output_dir or "output") / "discovered_functions.json"
     if config.resume and discovered_file.exists():
@@ -70,7 +78,7 @@ def discover_attack_surface_entries(config: Config) -> str:
         debug=config.debug,
         output_dir=config.output_dir,
     )
-    entries: list[FunctionInfo] = agent.discover()
+    entries: list[EntrySpec] = agent.discover()
 
     output_dir = Path(config.output_dir or "output")
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -88,7 +96,7 @@ def run_trace_agent(config):
 
     log(
         f"[启动] runtime={config.agent_runtime}, project={config.project_path}, "
-        f"output={config.output_dir}, scan={config.scan or '-'}, "
+        f"output={config.output_dir}, scan={config.scan or '-'}, entry={config.entry or '-'}, "
         f"attack_surface_skill={config.attack_surface_skill or '-'}"
     )
     status = get_terminal_status()
@@ -140,10 +148,11 @@ def run_trace_agent(config):
             log(f"[恢复模式] 配置已加载: {config.output_dir}/audit_config.json")
 
     try:
-        scan_path = discover_attack_surface_entries(config)
+        discovered_entry_path = discover_attack_surface_entries(config)
     except ValueError as e:
         print(f"错误：{e}", file=sys.stderr)
         sys.exit(1)
+    entry_path = config.entry or discovered_entry_path
 
     agent = TraceAgent(
         project_path=config.project_path,
@@ -155,7 +164,12 @@ def run_trace_agent(config):
     )
 
     # audit_all 会自动保存 checkpoint 并在最后合并导出结果
-    agent.audit_all(scan_path, output_dir=config.output_dir, resume=config.resume)
+    agent.audit_all(
+        scan_path=config.scan or None,
+        entry_path=entry_path or None,
+        output_dir=config.output_dir,
+        resume=config.resume,
+    )
     status.set_stage("完成", function_name="-", audit_type="-")
     log("[完成] 审计流程结束")
 

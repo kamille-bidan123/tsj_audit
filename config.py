@@ -86,9 +86,13 @@ class Config(BaseSettings):
         default="",
         description="起始扫描脚本路径"
     )
+    entry: str = Field(
+        default="",
+        description="EntrySpec JSON 入口文件路径"
+    )
     attack_surface_skill: str = Field(
         default="",
-        description="攻击面 skill 名；配置后自动发现该攻击面的 FunctionInfo 列表"
+        description="攻击面 skill 名；配置后自动发现该攻击面的 EntrySpec 列表"
     )
     output_dir: str = Field(
         default="output",

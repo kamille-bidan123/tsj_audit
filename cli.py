@@ -104,7 +104,14 @@ def parse_args() -> argparse.Namespace:
         "--scan",
         type=str,
         default=None,
-        help="指定起始扫描脚本",
+        help="指定起始扫描脚本（仅脚本，不接收 JSON）",
+    )
+
+    feature_group.add_argument(
+        "--entry",
+        type=str,
+        default=None,
+        help="指定 EntrySpec JSON 入口文件",
     )
 
     feature_group.add_argument(

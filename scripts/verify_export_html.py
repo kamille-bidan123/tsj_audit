@@ -20,7 +20,6 @@ def build_sample_results() -> list[TraceResult]:
         start_line=12,
         end_line=42,
         code_snippet='int handle_login() { return strcmp(user, "<admin>"); }',
-        input="LEGACY_INPUT_FIELD_SHOULD_NOT_RENDER",
         skill="civetweb_audit",
     )
     context = CodeContext(

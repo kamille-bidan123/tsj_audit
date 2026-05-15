@@ -24,7 +24,7 @@ from typing import List, Dict
 # 添加项目根目录到路径
 sys.path.insert(0, str(Path(__file__).parent))
 
-from models import FunctionInfo
+from models import EntrySpec
 
 
 # C/C++ 文件扩展名
@@ -479,7 +479,7 @@ def scan_file(filepath: Path, project_path: str) -> List[Dict]:
     return results
 
 
-def scan_directory(project_path: str) -> List[FunctionInfo]:
+def scan_directory(project_path: str) -> List[EntrySpec]:
     """扫描整个目录，收集所有 ioctl 接口信息"""
     results = []
     project = Path(project_path)
@@ -508,13 +508,10 @@ def scan_directory(project_path: str) -> List[FunctionInfo]:
 
             seen_functions.add(func_identifier)
 
-            func_info = FunctionInfo(
+            func_info = EntrySpec(
                 func_name=r["name"],
                 file_path=r["file_path"],
                 start_line=r["start_line"],
-                end_line=r["end_line"],
-                code_snippet=r["code_snippet"],
-                input=INPUT_POINT,
             )
             results.append(func_info)
 
@@ -535,7 +532,7 @@ def scan_directory(project_path: str) -> List[FunctionInfo]:
     return results
 
 
-def output_results(results: List[FunctionInfo], output_format: str = "text"):
+def output_results(results: List[EntrySpec], output_format: str = "text"):
     """输出扫描结果"""
     if output_format == "json":
         import json
@@ -551,11 +548,7 @@ def output_results(results: List[FunctionInfo], output_format: str = "text"):
 
         for i, r in enumerate(results, 1):
             print(f"[{i}] {r.func_name}")
-            print(f"    文件：{r.file_path}:{r.start_line}-{r.end_line}")
-            if r.code_snippet:
-                print(f"    代码片段:")
-                for line in r.code_snippet.split('\n')[:8]:
-                    print(f"        {line}")
+            print(f"    文件：{r.file_path}:{r.start_line}")
             print("-" * 80)
 
 
