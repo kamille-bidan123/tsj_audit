@@ -91,7 +91,8 @@ agent_runtime = "codex"
 opencode_base_url = "http://127.0.0.1:4096"
 opencode_provider_id = ""
 opencode_model_id = ""
-opencode_enable_event_stream = false
+opencode_structured_output_mode = "auto"
+opencode_require_prompt_fallback_confirmation = true
 external_runtime_timeout_seconds = 1800
 
 project_path = "."
@@ -117,13 +118,29 @@ target_base_url = "http://localhost:8081"
 
 Entry Discovery、Trace、Audit、Exploit 都通过同一套 runtime factory 创建，因此三个 runtime 都可以参与完整流程。
 
+当 `agent_runtime = "opencode"` 时，启动后会先做一次结构化输出 demo 探测：
+
+- 当前模型支持 `format=json_schema`：后续直接使用 opencode 结构化输出。
+- 当前模型不支持 `format=json_schema`：工具不会自动切换 thinking mode 或 variant；会退回 prompt JSON + 客户端解析/校验/重试，并在日志/TUI 中输出警告；默认需要手动输入 `y` 确认后才继续。
+
+thinking mode 的开启/关闭由使用者在 opencode/provider 配置中自行管理。工具只测试当前配置是否支持 `json_schema`。
+
+高级 opencode 调试开关：
+
+```env
+opencode_enable_event_stream = false
+```
+
+默认关闭 `/event` SSE 监听，使用轮询获取 tool/permission 日志。
+
 ## 终端界面
 
 在交互式终端中运行 `python3 main.py` 或 `uv run python main.py` 时，工具会启动 Textual TUI：
 
 - 上方显示实时日志，包括 opencode tool call、permission、阶段输出。
 - 底部固定显示当前阶段、当前审计函数、当前漏洞类型、runtime 和 session。
-- 按 `g` 展开/收起已审计函数表，展开后可用鼠标滚轮滚动。
+- 按 `g` 展开/收起已审计函数表。
+- TUI 默认关闭鼠标捕获，日志窗口可用终端原生拖选复制；Textual 选区也可用 `Ctrl+C` 复制。
 - opencode 触发 write/edit/patch 等权限请求时，会在界面中高亮显示；按 `o` 批准本次，`a` 永久批准，`r` 拒绝。
 
 如果 stdout/stderr/stdin 不是 TTY，或者未安装 Textual，会自动退回普通日志模式。

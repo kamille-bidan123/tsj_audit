@@ -90,6 +90,47 @@ def discover_attack_surface_entries(config: Config) -> str:
     return str(discovered_file)
 
 
+def initialize_runtime_output_format(config: Config) -> None:
+    """Probe runtime structured-output support before the audit stages start."""
+    if (config.agent_runtime or "").strip().lower() != "opencode":
+        return
+
+    mode = (config.opencode_structured_output_mode or "auto").strip()
+    if mode != "auto":
+        log(f"[opencode] 结构化输出模式使用配置值: {mode}")
+        return
+
+    from agents.runtime_clients.opencode import OpenCodeRuntimeClient
+
+    status = get_terminal_status()
+    status.set_stage("Runtime Probe", function_name="-", audit_type="-")
+    log("[opencode] 开始结构化输出兼容性 demo 测试")
+    client = OpenCodeRuntimeClient(project_path=config.project_path, debug=config.debug)
+    decision = client.probe_structured_output(config)
+    config.opencode_structured_output_mode = decision.mode
+    log(f"[opencode] 结构化输出模式: {decision.mode} - {decision.message}")
+
+    if decision.mode != "prompt":
+        return
+
+    warning = (
+        "[警告] 当前 opencode provider/model 不兼容 format=json_schema，"
+        "将退回 prompt JSON + 客户端解析/校验/重试。该模式更容易受模型偶发格式漂移影响。"
+    )
+    log(warning)
+    status.log(warning)
+    if not config.opencode_require_prompt_fallback_confirmation:
+        return
+
+    status.pause_input()
+    try:
+        choice = input("确认继续使用 prompt JSON fallback 吗？输入 y 继续，其他输入终止: ").strip().lower()
+    finally:
+        status.resume_input()
+    if choice not in {"y", "yes"}:
+        raise SystemExit("用户未确认 prompt JSON fallback，程序终止")
+
+
 def run_trace_agent(config):
     """运行 TraceAgent 进行污点追踪审计"""
     from agents.trace_agent import TraceAgent
@@ -140,6 +181,8 @@ def run_trace_agent(config):
             print()
             print("提示：审计数据保存在 output/checkpoints/ 目录")
             sys.exit(1)
+
+    initialize_runtime_output_format(config)
 
     # 保存当前配置到输出目录
     if config.output_dir:

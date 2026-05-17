@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
 import socket
 import sys
@@ -11,13 +12,26 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from datetime import datetime
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode, urlparse
 
 from pydantic import BaseModel
 
 from agents.runtime_clients.base import BaseRuntimeClient
+from utils.structured_output import extract_structured_model
 from utils.terminal_status import get_terminal_status
+
+
+@dataclass
+class OpenCodeStructuredOutputDecision:
+    mode: str
+    message: str = ""
+
+
+class _StructuredOutputProbeModel(BaseModel):
+    ok: bool
 
 
 class OpenCodeRuntimeClient(BaseRuntimeClient):
@@ -43,19 +57,12 @@ class OpenCodeRuntimeClient(BaseRuntimeClient):
         get_terminal_status().set_runtime("opencode", session_id=session_id)
         self._log(f"[opencode] stage={stage_name} session={session_id} 发送 message")
 
-        body: dict[str, Any] = {
-            "parts": [{"type": "text", "text": prompt}],
-        }
-        tool_policy = self._tool_policy(stage_name)
-        if tool_policy:
-            body["tools"] = tool_policy
-        provider_id = (config.opencode_provider_id or "").strip()
-        model_id = (config.opencode_model_id or "").strip()
-        if provider_id and model_id:
-            body["model"] = {
-                "providerID": provider_id,
-                "modelID": model_id,
-            }
+        body = self._message_body(
+            prompt=prompt,
+            output_model=output_model,
+            config=config,
+            stage_name=stage_name,
+        )
 
         stop_events = self._start_activity_listeners(session_id, stage_name=stage_name, config=config)
         try:
@@ -70,6 +77,160 @@ class OpenCodeRuntimeClient(BaseRuntimeClient):
             return response
         finally:
             stop_events.set()
+
+    def probe_structured_output(self, config) -> OpenCodeStructuredOutputDecision:
+        """Probe the current opencode provider/model and choose an output mode."""
+        configured = (getattr(config, "opencode_structured_output_mode", "auto") or "auto").strip()
+        if configured != "auto":
+            return OpenCodeStructuredOutputDecision(
+                mode=configured,
+                message=f"opencode structured output mode forced to {configured}",
+            )
+
+        first_error = ""
+        try:
+            self._probe_json_schema(config)
+            return OpenCodeStructuredOutputDecision(
+                mode="json_schema",
+                message="opencode format=json_schema probe succeeded",
+            )
+        except Exception as exc:
+            first_error = str(exc)
+            self._log(f"[opencode:probe] format=json_schema failed: {exc}")
+
+        return OpenCodeStructuredOutputDecision(
+            mode="prompt",
+            message=(
+                "opencode format=json_schema is not compatible with the current provider/model; "
+                f"first error: {first_error or 'unknown'}"
+            ),
+        )
+
+    def _probe_json_schema(self, config) -> None:
+        session = self._request("POST", "/session", None, config)
+        session_id = session.get("id") or session.get("data", {}).get("id")
+        if not session_id:
+            raise RuntimeError(f"opencode did not return a probe session id: {session}")
+        body = self._message_body(
+            prompt='Return {"ok": true}.',
+            output_model=_StructuredOutputProbeModel,
+            config=config,
+            stage_name="structured_output_probe",
+            force_json_schema=True,
+            include_tools=False,
+        )
+        response = self._request("POST", f"/session/{session_id}/message", body, config)
+        self._raise_for_assistant_error(response)
+        output = extract_structured_model(response, _StructuredOutputProbeModel)
+        if output.ok is not True:
+            raise RuntimeError(f"opencode structured output probe returned unexpected value: {output}")
+
+    def _message_body(
+        self,
+        *,
+        prompt: str,
+        output_model: type[BaseModel],
+        config,
+        stage_name: str,
+        force_json_schema: bool = False,
+        include_tools: bool = True,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {
+            "parts": [{"type": "text", "text": prompt}],
+        }
+        if include_tools:
+            tool_policy = self._tool_policy(stage_name)
+            if tool_policy:
+                body["tools"] = tool_policy
+        provider_id = (getattr(config, "opencode_provider_id", "") or "").strip()
+        model_id = (getattr(config, "opencode_model_id", "") or "").strip()
+        if provider_id and model_id:
+            body["model"] = {
+                "providerID": provider_id,
+                "modelID": model_id,
+            }
+        if self._should_send_json_schema(config) or force_json_schema:
+            body["format"] = {
+                "type": "json_schema",
+                "schema": self._opencode_output_schema(output_model),
+            }
+        return body
+
+    def _should_send_json_schema(self, config) -> bool:
+        mode = (getattr(config, "opencode_structured_output_mode", "prompt") or "prompt").strip()
+        return mode == "json_schema"
+
+    def _opencode_output_schema(self, output_model: type[BaseModel]) -> dict[str, Any]:
+        """Return a schema shape accepted by opencode OutputFormatJsonSchema."""
+        schema = self._output_schema(output_model)
+        defs = schema.get("$defs") if isinstance(schema.get("$defs"), dict) else {}
+        sanitized = self._sanitize_opencode_schema(schema, defs)
+        if isinstance(sanitized, dict):
+            sanitized.pop("$defs", None)
+            return sanitized
+        return schema
+
+    def _sanitize_opencode_schema(self, value: Any, defs: dict[str, Any]) -> Any:
+        if isinstance(value, list):
+            return [self._sanitize_opencode_schema(item, defs) for item in value]
+        if not isinstance(value, dict):
+            return value
+
+        ref = value.get("$ref")
+        if isinstance(ref, str) and ref.startswith("#/$defs/"):
+            name = ref.rsplit("/", 1)[-1]
+            target = defs.get(name)
+            if isinstance(target, dict):
+                return self._sanitize_opencode_schema(target, defs)
+
+        any_of = value.get("anyOf")
+        if isinstance(any_of, list):
+            non_null = [
+                item
+                for item in any_of
+                if not (isinstance(item, dict) and item.get("type") == "null")
+            ]
+            if len(non_null) == 1:
+                merged = {
+                    key: item
+                    for key, item in value.items()
+                    if key not in {"anyOf", "default"}
+                }
+                replacement = self._sanitize_opencode_schema(non_null[0], defs)
+                if isinstance(replacement, dict):
+                    merged = {**replacement, **merged}
+                return self._sanitize_opencode_schema(merged, defs)
+
+        allowed_schema_keys = {
+            "type",
+            "properties",
+            "items",
+            "required",
+            "enum",
+            "const",
+            "minimum",
+            "maximum",
+            "minLength",
+            "maxLength",
+            "pattern",
+            "minItems",
+            "maxItems",
+        }
+        sanitized = {}
+        for key, item in value.items():
+            if key not in allowed_schema_keys:
+                continue
+            if key == "properties" and isinstance(item, dict):
+                sanitized[key] = {
+                    prop_name: self._sanitize_opencode_schema(prop_schema, defs)
+                    for prop_name, prop_schema in item.items()
+                }
+            else:
+                sanitized[key] = self._sanitize_opencode_schema(item, defs)
+        return sanitized
+
+    def _is_format_schema_rejection(self, exc: Exception) -> bool:
+        return self._is_format_schema_error_text(str(exc))
 
     def _request(self, method: str, path: str, body: Any, config) -> Any:
         base_url = config.opencode_base_url.rstrip("/")
@@ -96,6 +257,7 @@ class OpenCodeRuntimeClient(BaseRuntimeClient):
                 )
         except urllib.error.HTTPError as exc:
             text = exc.read().decode("utf-8", errors="replace")
+            setattr(exc, "_tsj_response_body", text)
             raise RuntimeError(
                 f"opencode serve returned HTTP {exc.code} for {method} {base_url}{request_path}: "
                 f"{self._preview(text)}"
@@ -121,6 +283,9 @@ class OpenCodeRuntimeClient(BaseRuntimeClient):
                 f"opencode serve returned non-JSON response for {base_url}{path} "
                 f"(HTTP {status}): {self._preview(stripped)}"
             ) from exc
+
+    def _is_format_schema_error_text(self, text: str) -> bool:
+        return "Expected OutputFormatJsonSchema" in text or "Expected OutputFormat" in text
 
     def _path_with_project_context(self, path: str) -> str:
         """Bind opencode serve requests to the configured project directory."""
@@ -348,15 +513,22 @@ class OpenCodeRuntimeClient(BaseRuntimeClient):
         seen: set[tuple[str, str]],
         seen_permissions: set[str],
     ) -> None:
+        poll_messages = not self._should_send_json_schema(config)
+        if not poll_messages:
+            self._log(
+                f"[opencode:poll] stage={stage_name} session={session_id} "
+                "format=json_schema 模式跳过 /session/:id/message 轮询，避免 opencode message list 校验错误"
+            )
         while not stop_event.is_set():
             try:
-                messages = self._request("GET", f"/session/{session_id}/message", None, config)
-                self._log_tool_parts(
-                    messages,
-                    session_id=session_id,
-                    seen=seen,
-                    debug=bool(getattr(config, "debug", False)),
-                )
+                if poll_messages:
+                    messages = self._request("GET", f"/session/{session_id}/message", None, config)
+                    self._log_tool_parts(
+                        messages,
+                        session_id=session_id,
+                        seen=seen,
+                        debug=bool(getattr(config, "debug", False)),
+                    )
                 permissions = self._request("GET", "/permission", None, config)
                 self._handle_pending_permissions(
                     permissions,
@@ -366,8 +538,44 @@ class OpenCodeRuntimeClient(BaseRuntimeClient):
                 )
             except Exception as exc:
                 if not stop_event.is_set():
+                    if self._is_format_schema_rejection(exc):
+                        detail_path = self._write_poll_error_detail(
+                            stage_name=stage_name,
+                            session_id=session_id,
+                            exc=exc,
+                            config=config,
+                        )
+                        suffix = f"；完整错误已保存: {detail_path}" if detail_path else ""
+                        self._log(
+                            f"[opencode:poll] stage={stage_name} session={session_id} "
+                            "message 查询触发 opencode format 校验错误，已停止轮询日志"
+                            f"{suffix}。摘要: {self._preview(str(exc), limit=500)}"
+                        )
+                        return
                     self._log(f"[opencode:poll] stage={stage_name} session={session_id} 查询失败: {exc}")
             stop_event.wait(2)
+
+    def _write_poll_error_detail(self, *, stage_name: str, session_id: str, exc: Exception, config) -> Path | None:
+        try:
+            output_dir = Path(getattr(config, "output_dir", "") or "output")
+            output_dir.mkdir(parents=True, exist_ok=True)
+            safe_stage = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in stage_name)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            path = output_dir / f"opencode_poll_error_{safe_stage}_{session_id}_{timestamp}.log"
+            detail = str(exc)
+            cause = getattr(exc, "__cause__", None)
+            if isinstance(cause, urllib.error.HTTPError):
+                body = getattr(cause, "_tsj_response_body", "")
+                if isinstance(body, str) and body:
+                    detail = (
+                        f"{exc}\n\n"
+                        "===== Full opencode HTTP response body =====\n"
+                        f"{body}"
+                    )
+            path.write_text(detail, encoding="utf-8")
+            return path
+        except OSError:
+            return None
 
     def _try_parse_json(self, text: str) -> Any | None:
         try:

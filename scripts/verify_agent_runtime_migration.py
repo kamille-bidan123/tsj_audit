@@ -15,7 +15,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from agents.output_schemas import AuditOutput, TraceOutput
+from agents.output_schemas import AuditOutput, EntryDiscoveryOutput, TraceOutput
 import agents.runtime_factory as runtime_factory
 from agents.trace_agent import TraceAgent
 from config import get_config, init_settings
@@ -146,6 +146,51 @@ def verify_trace_agent_pipeline() -> None:
         raise AssertionError("trace pipeline should run audit stage")
     if not fake_agent.saved_conversations:
         raise AssertionError("trace pipeline should save trace conversation history")
+
+
+def verify_trace_runtime_valueerror_falls_back() -> None:
+    import tempfile
+
+    from agents import agent_runtime_runner as runner_module
+    from agents.agent_runtime_runner import AgentRuntimeTraceExplorer
+
+    class ValueErrorRuntimeClient:
+        calls = 0
+
+        def __init__(self, runtime: str, *, project_path: str, debug: bool = False):
+            pass
+
+        def run_json(self, **_kwargs):
+            self.__class__.calls += 1
+            raise ValueError("runtime did not return valid TraceOutput")
+
+    original_client = runner_module.AgentRuntimeClient
+    ValueErrorRuntimeClient.calls = 0
+    runner_module.AgentRuntimeClient = ValueErrorRuntimeClient
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            configure_project_root(agent_runtime="codex", project_path=tmpdir)
+            entry = EntrySpec(
+                func_name="handle_test",
+                file_path="src/test.c",
+                start_line=10,
+                skill="civetweb_audit",
+            )
+            func_info, code_logic, code_map, _messages = AgentRuntimeTraceExplorer(
+                FakeTraceAgent(),
+                runtime="codex",
+            ).run(entry)
+    finally:
+        runner_module.AgentRuntimeClient = original_client
+
+    if func_info.func_name != "handle_test":
+        raise AssertionError("trace fallback should preserve entry function name")
+    if ValueErrorRuntimeClient.calls != 3:
+        raise AssertionError(f"trace fallback should retry runtime 3 times, got {ValueErrorRuntimeClient.calls}")
+    if "runtime did not return valid TraceOutput" not in code_logic:
+        raise AssertionError("trace fallback should include the structured output error")
+    if len(code_map) != 1 or not code_map[0].is_entry_point:
+        raise AssertionError("trace fallback should return an entry-only code map")
 
 
 def verify_agent_runtime_factory_returns_runtime_runners() -> None:
@@ -667,6 +712,7 @@ def verify_opencode_runtime_uses_current_api_and_reports_bad_json() -> None:
         opencode_provider_id = ""
         opencode_model_id = ""
         opencode_enable_event_stream = False
+        opencode_structured_output_mode = "prompt"
         external_runtime_timeout_seconds = 1
 
     class FakeOpenCodeRuntimeClient(OpenCodeRuntimeClient):
@@ -714,7 +760,7 @@ def verify_opencode_runtime_uses_current_api_and_reports_bad_json() -> None:
     if client.paths != ["/session", "/session/ses_test/message"]:
         raise AssertionError(f"opencode runtime should use current API paths, got {client.paths}")
     if "format" in client.bodies[-1]:
-        raise AssertionError("opencode runtime should not send format=json_schema because some providers reject tool_choice")
+        raise AssertionError("opencode prompt fallback mode should not send format=json_schema")
     tools = client.bodies[-1].get("tools") or {}
     if tools.get("bash") is not True or tools.get("shell") is not True:
         raise AssertionError("opencode runtime should allow bash/shell by default")
@@ -845,9 +891,186 @@ def verify_opencode_runtime_uses_current_api_and_reports_bad_json() -> None:
         raise AssertionError(f"opencode directory query should use resolved project path: {contextual_path}")
 
 
+def verify_opencode_structured_output_probe_and_modes() -> None:
+    from agents.runtime_clients.opencode import OpenCodeRuntimeClient
+
+    class FakeConfig:
+        opencode_base_url = "http://127.0.0.1:4096"
+        opencode_provider_id = "deepseek"
+        opencode_model_id = "deepseek-v4-pro"
+        opencode_enable_event_stream = False
+        opencode_structured_output_mode = "json_schema"
+        external_runtime_timeout_seconds = 1
+
+    class FakeAutoConfig(FakeConfig):
+        opencode_structured_output_mode = "auto"
+
+    class FakeOpenCodeRuntimeClient(OpenCodeRuntimeClient):
+        def __init__(self, outcomes):
+            super().__init__(project_path=str(PROJECT_ROOT), debug=False)
+            self.outcomes = list(outcomes)
+            self.paths: list[str] = []
+            self.bodies: list[dict] = []
+            self.logs: list[str] = []
+
+        def _start_activity_listeners(self, session_id, *, stage_name, config):
+            class NoopStop:
+                def set(self):
+                    pass
+
+            return NoopStop()
+
+        def _log(self, message):
+            self.logs.append(message)
+
+        def _request(self, method, path, body, config):
+            self.paths.append(path)
+            if isinstance(body, dict):
+                self.bodies.append(body)
+            if path == "/session":
+                return {"id": f"ses_{len(self.paths)}"}
+            if path.startswith("/session/") and path.endswith("/message"):
+                outcome = self.outcomes.pop(0)
+                if isinstance(outcome, Exception):
+                    raise outcome
+                return outcome
+            raise AssertionError(f"unexpected opencode path: {path}")
+
+    client = FakeOpenCodeRuntimeClient([{"info": {"structured": {"ok": True}}, "parts": []}])
+    result = client.run_raw(
+        prompt="hello",
+        output_model=TraceOutput,
+        config=FakeConfig(),
+        stage_name="trace",
+    )
+    if result["info"]["structured"]["ok"] is not True:
+        raise AssertionError("opencode runtime should return structured response")
+    if client.bodies[-1].get("format", {}).get("type") != "json_schema":
+        raise AssertionError("opencode json_schema mode should send format=json_schema")
+    if "function_info" not in client.bodies[-1]["format"]["schema"].get("properties", {}):
+        raise AssertionError("opencode json_schema mode should send the requested output model schema")
+
+    discovery_client = FakeOpenCodeRuntimeClient([{"info": {"structured": {"functions": []}}, "parts": []}])
+    discovery_client.run_raw(
+        prompt="discover",
+        output_model=EntryDiscoveryOutput,
+        config=FakeConfig(),
+        stage_name="entry_discovery",
+    )
+    discovery_schema = discovery_client.bodies[-1]["format"]["schema"]
+    schema_text = json.dumps(discovery_schema, ensure_ascii=False)
+    for rejected_key in ("$defs", "$ref", "anyOf", "description", "title", "additionalProperties", "default"):
+        if rejected_key in schema_text:
+            raise AssertionError(f"opencode json_schema mode should remove {rejected_key} before sending format schema")
+    item_schema = discovery_schema["properties"]["functions"]["items"]
+    if item_schema.get("properties", {}).get("start_line", {}).get("type") != "integer":
+        raise AssertionError("opencode schema sanitizer should keep start_line as an integer field")
+
+    probe_client = FakeOpenCodeRuntimeClient(
+        [
+            RuntimeError("deepseek-reasoner does not support this tool_choice"),
+        ]
+    )
+    decision = probe_client.probe_structured_output(FakeAutoConfig())
+    if decision.mode != "prompt":
+        raise AssertionError(f"probe should fall back to prompt mode without changing thinking/variant, got {decision}")
+    if probe_client.bodies[0].get("format", {}).get("type") != "json_schema":
+        raise AssertionError("probe should try json_schema first")
+    if len(probe_client.bodies) != 1:
+        raise AssertionError("probe should not retry with no-thinking variants; users own thinking mode")
+
+    class PollProbeClient(FakeOpenCodeRuntimeClient):
+        def _handle_pending_permissions(self, *_args, **_kwargs):
+            pass
+
+    class StopAfterPermissionConfig(FakeConfig):
+        external_runtime_timeout_seconds = 1
+
+    poll_client = PollProbeClient([])
+    stop_event = __import__("threading").Event()
+
+    def request_once(method, path, body, config):
+        poll_client.paths.append(path)
+        stop_event.set()
+        if path == "/permission":
+            return []
+        raise AssertionError(f"json_schema polling should not request {path}")
+
+    poll_client._request = request_once
+    poll_client._poll_session_messages(
+        "ses_test",
+        "entry_discovery",
+        StopAfterPermissionConfig(),
+        stop_event,
+        set(),
+        set(),
+    )
+    if "/session/ses_test/message" in poll_client.paths:
+        raise AssertionError("opencode json_schema mode should skip broken message-list polling")
+    if "/permission" not in poll_client.paths:
+        raise AssertionError("opencode json_schema mode should still poll permissions")
+
+    fallback_client = FakeOpenCodeRuntimeClient(
+        [
+            RuntimeError("tool_choice unsupported"),
+        ]
+    )
+    fallback = fallback_client.probe_structured_output(FakeAutoConfig())
+    if fallback.mode != "prompt":
+        raise AssertionError(f"fully unsupported probe should fall back to prompt mode, got {fallback}")
+
+    schema_reject_client = FakeOpenCodeRuntimeClient(
+        [RuntimeError("opencode serve returned HTTP 400: Expected OutputFormatJsonSchema")]
+    )
+    try:
+        schema_reject_client.run_raw(
+            prompt="discover",
+            output_model=EntryDiscoveryOutput,
+            config=FakeConfig(),
+            stage_name="entry_discovery",
+        )
+    except RuntimeError as exc:
+        if "Expected OutputFormatJsonSchema" not in str(exc):
+            raise AssertionError(f"unexpected schema rejection error: {exc}")
+    else:
+        raise AssertionError("opencode schema rejection should not silently downgrade")
+    if len(schema_reject_client.bodies) != 1 or "format" not in schema_reject_client.bodies[0]:
+        raise AssertionError("opencode schema rejection should preserve the original json_schema attempt")
+    import tempfile
+    import urllib.error
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        class FakePollConfig(FakeConfig):
+            output_dir = tmpdir
+
+        cause = urllib.error.HTTPError(
+            url="http://127.0.0.1:4096/session/test/message",
+            code=400,
+            msg="Bad Request",
+            hdrs=None,
+            fp=None,
+        )
+        full_body = "Expected OutputFormatJsonSchema " + ("x" * 1200)
+        setattr(cause, "_tsj_response_body", full_body)
+        error = RuntimeError("opencode serve returned HTTP 400: Expected OutputFormatJsonSchema ...")
+        error.__cause__ = cause
+        detail_path = client._write_poll_error_detail(
+            stage_name="entry_discovery",
+            session_id="ses_test",
+            exc=error,
+            config=FakePollConfig(),
+        )
+        if detail_path is None or not detail_path.exists():
+            raise AssertionError("opencode poll format errors should be written to a detail log")
+        detail_content = detail_path.read_text(encoding="utf-8")
+        if full_body not in detail_content:
+            raise AssertionError("opencode poll detail log should contain the full error text")
+
+
 def main() -> None:
     configure_project_root()
     verify_trace_agent_pipeline()
+    verify_trace_runtime_valueerror_falls_back()
     verify_agent_runtime_factory_returns_runtime_runners()
     verify_function_info_skill_runtime_installation()
     verify_prompts_reference_function_skill()
@@ -866,6 +1089,7 @@ def main() -> None:
     verify_tags_mcp_server()
     verify_runtime_config_removed_legacy_llm_fields()
     verify_opencode_runtime_uses_current_api_and_reports_bad_json()
+    verify_opencode_structured_output_probe_and_modes()
     print("Agent runtime migration verification passed")
 
 

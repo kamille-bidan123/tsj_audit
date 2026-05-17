@@ -69,6 +69,14 @@ def parse_args() -> argparse.Namespace:
         help="opencode modelID（默认从配置文件读取）",
     )
 
+    api_group.add_argument(
+        "--opencode-structured-output-mode",
+        type=str,
+        choices=["auto", "json_schema", "prompt"],
+        default=None,
+        help="opencode 结构化输出模式（默认 auto，启动时探测兼容性）",
+    )
+
     # ========== 功能开关 ==========
     feature_group = parser.add_argument_group("功能开关")
 

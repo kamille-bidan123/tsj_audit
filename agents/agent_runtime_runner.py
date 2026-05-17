@@ -18,6 +18,9 @@ from utils.runtime_skills import build_attack_surface_skill_usage_prompt, build_
 from utils.terminal_status import get_terminal_status
 
 
+RUNTIME_RETRY_ATTEMPTS = 3
+
+
 class AgentRuntimeEntryDiscoveryRunner:
     """Attack-surface entry discovery backed by opencode/Codex/Claude Code."""
 
@@ -112,16 +115,25 @@ class AgentRuntimeTraceExplorer:
             project_path=config.project_path,
             debug=getattr(self.trace_agent, "debug", False),
         )
-        try:
-            output, messages = client.run_json(
-                stage_name="trace",
-                system_prompt=self._system_prompt(entry, project_path=config.project_path),
-                user_prompt=self._user_prompt(),
-                output_model=TraceOutput,
-            )
-        except (RuntimeError, ValidationError) as exc:
-            return self._fallback(entry, exc)
-        trace_output = TraceOutput.model_validate(output)
+        last_exc: Exception | None = None
+        for attempt in range(1, RUNTIME_RETRY_ATTEMPTS + 1):
+            try:
+                output, messages = client.run_json(
+                    stage_name="trace",
+                    system_prompt=self._system_prompt(entry, project_path=config.project_path),
+                    user_prompt=self._user_prompt(),
+                    output_model=TraceOutput,
+                )
+                trace_output = TraceOutput.model_validate(output)
+                break
+            except (RuntimeError, ValidationError, ValueError) as exc:
+                last_exc = exc
+                if attempt < RUNTIME_RETRY_ATTEMPTS:
+                    self._log_runtime_failure(
+                        f"{self.runtime} trace runtime attempt {attempt}/{RUNTIME_RETRY_ATTEMPTS} failed: {exc}; retrying"
+                    )
+        else:
+            return self._fallback(entry, last_exc or RuntimeError("trace runtime failed"))
         if callable(log):
             log(f"[TraceRuntime] runtime={self.runtime} 完成 trace: {trace_output.function_info.func_name}")
         return trace_output.function_info, trace_output.code_logic, trace_output.code_map, messages
@@ -244,16 +256,29 @@ class AgentRuntimeAuditRunner:
             flush=True,
         )
         client = AgentRuntimeClient(self.runtime, project_path=self.project_path, debug=self.debug)
-        try:
-            output, _messages = client.run_json(
-                stage_name=self.agent_name,
-                system_prompt=self._system_prompt(),
-                user_prompt=self._user_prompt(),
-                output_model=AuditOutput,
-            )
-        except (RuntimeError, ValidationError) as exc:
-            output = self._fallback_output(exc)
-        audit_output = AuditOutput.model_validate(output)
+        last_exc: Exception | None = None
+        for attempt in range(1, RUNTIME_RETRY_ATTEMPTS + 1):
+            try:
+                output, _messages = client.run_json(
+                    stage_name=self.agent_name,
+                    system_prompt=self._system_prompt(),
+                    user_prompt=self._user_prompt(),
+                    output_model=AuditOutput,
+                )
+                audit_output = AuditOutput.model_validate(output)
+                break
+            except (RuntimeError, ValidationError, ValueError) as exc:
+                last_exc = exc
+                if attempt < RUNTIME_RETRY_ATTEMPTS:
+                    print(
+                        f"[AuditRuntime] runtime={self.runtime} agent={self.agent_name} "
+                        f"attempt {attempt}/{RUNTIME_RETRY_ATTEMPTS} failed: {exc}; retrying",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+        else:
+            output = self._fallback_output(last_exc or RuntimeError("audit runtime failed"))
+            audit_output = AuditOutput.model_validate(output)
         results = self._audit_results_from_output(audit_output)
         print(
             f"[AuditRuntime] runtime={self.runtime} agent={self.agent_name} 完成，结果 {len(results)} 条",
@@ -399,16 +424,29 @@ class AgentRuntimeExploitRunner:
             flush=True,
         )
         client = AgentRuntimeClient(self.runtime, project_path=self.project_path, debug=self.debug)
-        try:
-            output, _messages = client.run_json(
-                stage_name="exploit",
-                system_prompt=self._system_prompt(),
-                user_prompt=self.user_message,
-                output_model=ExploitOutput,
-            )
-        except (RuntimeError, ValidationError) as exc:
-            output = self._fallback_output(exc)
-        exploit_output = ExploitOutput.model_validate(output)
+        last_exc: Exception | None = None
+        for attempt in range(1, RUNTIME_RETRY_ATTEMPTS + 1):
+            try:
+                output, _messages = client.run_json(
+                    stage_name="exploit",
+                    system_prompt=self._system_prompt(),
+                    user_prompt=self.user_message,
+                    output_model=ExploitOutput,
+                )
+                exploit_output = ExploitOutput.model_validate(output)
+                break
+            except (RuntimeError, ValidationError, ValueError) as exc:
+                last_exc = exc
+                if attempt < RUNTIME_RETRY_ATTEMPTS:
+                    print(
+                        f"[ExploitRuntime] runtime={self.runtime} "
+                        f"attempt {attempt}/{RUNTIME_RETRY_ATTEMPTS} failed: {exc}; retrying",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+        else:
+            output = self._fallback_output(last_exc or RuntimeError("exploit runtime failed"))
+            exploit_output = ExploitOutput.model_validate(output)
         result = ExploitResult(
             vulnerability_type=self.audit_result.vulnerability_type,
             success=exploit_output.success,

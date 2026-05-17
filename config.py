@@ -9,7 +9,6 @@
 3. 默认值
 """
 
-import sys
 import json
 from pathlib import Path
 from functools import lru_cache
@@ -47,6 +46,14 @@ class Config(BaseSettings):
     opencode_enable_event_stream: bool = Field(
         default=False,
         description="启用 opencode /event SSE 监听；默认关闭，使用轮询获取 tool/permission 日志"
+    )
+    opencode_structured_output_mode: str = Field(
+        default="auto",
+        description="opencode 结构化输出模式：auto、json_schema 或 prompt"
+    )
+    opencode_require_prompt_fallback_confirmation: bool = Field(
+        default=True,
+        description="opencode 退回 prompt JSON 输出时是否要求用户手动确认"
     )
     external_runtime_timeout_seconds: int = Field(
         default=1800,
@@ -104,9 +111,6 @@ class Config(BaseSettings):
         description="PoC 远程 URL 目标；localhost 仅在 sandbox 内服务可达时有效"
     )
 
-    # 命令行参数（用于传递 argparse 解析结果）
-    _cli_args: dict | None = None
-
     model_config = SettingsConfigDict(
         env_file=None,  # 不自动加载 .env，由 find_env_file() 处理
         env_file_encoding="utf-8",
@@ -114,18 +118,6 @@ class Config(BaseSettings):
         extra="ignore",
         protected_namespaces=(),
     )
-
-    def __init__(self, **kwargs):
-        # 保存命令行参数
-        cli_args = kwargs.pop("_cli_args", None)
-        if cli_args:
-            self._cli_args = cli_args
-            # 将命令行参数合并到 kwargs
-            for key, value in cli_args.items():
-                if key != "_cli_args" and value is not None:
-                    kwargs[key] = value
-
-        super().__init__(**kwargs)
 
     @field_validator("audit_types", mode="before")
     @classmethod

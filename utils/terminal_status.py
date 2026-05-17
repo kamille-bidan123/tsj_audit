@@ -127,6 +127,8 @@ class AuditStatusApp(App):
 
     BINDINGS = [
         Binding("g", "toggle_functions", "展开/收起函数"),
+        Binding("ctrl+c", "copy_selection", "复制选中"),
+        Binding("escape", "clear_selection", "清除选中", show=False),
         Binding("o", "permission_once", "批准本次", show=False),
         Binding("a", "permission_always", "永久批准", show=False),
         Binding("r", "permission_reject", "拒绝", show=False),
@@ -178,8 +180,17 @@ class AuditStatusApp(App):
         self.functions_visible = not self.functions_visible
         table = self.query_one("#functions", DataTable)
         table.display = self.functions_visible
-        if self.functions_visible:
-            table.focus()
+
+    def action_copy_selection(self) -> None:
+        selected = self.screen.get_selected_text()
+        if not selected:
+            self.notify("没有选中文本。拖选日志或状态后按 Ctrl+C 复制。", severity="warning")
+            return
+        self.copy_to_clipboard(selected)
+        self.notify("已复制选中文本", severity="information")
+
+    def action_clear_selection(self) -> None:
+        self.screen.clear_selection()
 
     def action_permission_once(self) -> None:
         self.owner._reply_permission_from_tui("once")
@@ -218,7 +229,7 @@ class AuditStatusApp(App):
             f"[green]{self.owner.runtime or '-'}[/green]   "
             "[bold cyan]session[/bold cyan] "
             f"[dim]{self.owner.session_id or '-'}[/dim]   "
-            "[dim]g 展开/收起，鼠标滚动函数表[/dim]"
+            "[dim]g 展开/收起，拖选后 Ctrl+C 复制[/dim]"
         )
 
     def _refresh_functions(self) -> None:
@@ -301,7 +312,7 @@ class TerminalStatus:
         self._target_error = None
         self.app = AuditStatusApp(self, target)
         try:
-            self.app.run()
+            self.app.run(mouse=False)
         finally:
             self.app = None
             self._app_ready.clear()
