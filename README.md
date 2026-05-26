@@ -140,6 +140,9 @@ opencode_enable_event_stream = false
 - 上方显示实时日志，包括 opencode tool call、permission、阶段输出。
 - 底部固定显示当前阶段、当前审计函数、当前漏洞类型、runtime 和 session。
 - 按 `g` 展开/收起已审计函数表。
+- 手动滚动日志后会暂停新日志自动滚到底部；按 `l` 恢复日志自动跟随并跳到底部。
+- 审计流程结束或异常退出后，TUI 会保持打开便于查看日志；此时按 `q` 退出。
+- Python `stderr` 输出会以红色写入日志窗口；异常退出时完整 traceback 也会显示在 TUI 日志中。
 - TUI 默认关闭鼠标捕获，日志窗口可用终端原生拖选复制；Textual 选区也可用 `Ctrl+C` 复制。
 - opencode 触发 write/edit/patch 等权限请求时，会在界面中高亮显示；按 `o` 批准本次，`a` 永久批准，`r` 拒绝。
 
@@ -302,6 +305,9 @@ output/
   discovered_functions.json
   trace_results_*.json
   trace_results_*.html
+  trace_results_*_markdown/
+    all/
+    vulnerable/
   trace_results_*.sarif
   trace_results_*_issues.sarif
   checkpoints/
@@ -316,6 +322,7 @@ output/
 - `conversations/`：各阶段 Agent 对话记录。
 - `trace_results_*.json`：完整结构化审计结果。
 - `trace_results_*.html`：HTML 报告。
+- `trace_results_*_markdown/`：Markdown 报告目录，`all/` 包含全量函数，`vulnerable/` 仅包含有漏洞函数。
 - `trace_results_*.sarif`：SARIF 输出。
 
 ## 目录结构

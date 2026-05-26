@@ -40,6 +40,7 @@ class OpenCodeRuntimeClient(BaseRuntimeClient):
     _event_bus_lock = threading.Lock()
     _event_bus_threads: dict[tuple[str, str], threading.Thread] = {}
     _event_bus_subscribers: dict[tuple[str, str], list] = {}
+    _event_bus_disabled: set[tuple[str, str]] = set()
 
     def run_raw(
         self,
@@ -248,7 +249,7 @@ class OpenCodeRuntimeClient(BaseRuntimeClient):
                 request,
                 timeout=config.external_runtime_timeout_seconds,
             ) as response:
-                text = response.read().decode("utf-8", errors="replace")
+                text = self._read_response_text(response, timeout_seconds=config.external_runtime_timeout_seconds)
                 return self._parse_json_response(
                     text,
                     base_url=base_url,
@@ -268,6 +269,19 @@ class OpenCodeRuntimeClient(BaseRuntimeClient):
                 f"failed to call opencode serve at {base_url}: {exc}. "
                 f"{hint}"
             ) from exc
+
+    def _read_response_text(self, response, *, timeout_seconds: int) -> str:
+        """Read response bodies with a total deadline, not only socket inactivity."""
+        deadline = time.monotonic() + max(1, timeout_seconds)
+        chunks: list[bytes] = []
+        while True:
+            if time.monotonic() >= deadline:
+                raise RuntimeError(f"opencode serve response read timed out after {timeout_seconds}s")
+            chunk = response.read(65536)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        return b"".join(chunks).decode("utf-8", errors="replace")
 
     def _parse_json_response(self, text: str, *, base_url: str, path: str, status: int) -> Any:
         stripped = text.strip()
@@ -396,6 +410,9 @@ class OpenCodeRuntimeClient(BaseRuntimeClient):
 
         with self._event_bus_lock:
             self._event_bus_subscribers.setdefault(key, []).append(callback)
+            if key in self._event_bus_disabled:
+                self._log("[opencode:event] shared listener 已降级为轮询日志，本次不再启动 /event")
+                return lambda: self._unsubscribe_event_callback(key, callback)
             thread = self._event_bus_threads.get(key)
             if thread is None or not thread.is_alive():
                 thread = threading.Thread(
@@ -407,18 +424,21 @@ class OpenCodeRuntimeClient(BaseRuntimeClient):
                 thread.start()
 
         def unsubscribe() -> None:
-            with self._event_bus_lock:
-                callbacks = self._event_bus_subscribers.get(key)
-                if not callbacks:
-                    return
-                try:
-                    callbacks.remove(callback)
-                except ValueError:
-                    pass
-                if not callbacks:
-                    self._event_bus_subscribers.pop(key, None)
+            self._unsubscribe_event_callback(key, callback)
 
         return unsubscribe
+
+    def _unsubscribe_event_callback(self, key: tuple[str, str], callback) -> None:
+        with self._event_bus_lock:
+            callbacks = self._event_bus_subscribers.get(key)
+            if not callbacks:
+                return
+            try:
+                callbacks.remove(callback)
+            except ValueError:
+                pass
+            if not callbacks:
+                self._event_bus_subscribers.pop(key, None)
 
     def _event_bus_key(self, config) -> tuple[str, str]:
         return (config.opencode_base_url.rstrip("/"), str(self.project_path))
@@ -475,6 +495,7 @@ class OpenCodeRuntimeClient(BaseRuntimeClient):
                         "不再重连 /event"
                     )
                     with self._event_bus_lock:
+                        self._event_bus_disabled.add(key)
                         self._event_bus_threads.pop(key, None)
                     return
                 threading.Event().wait(2)
@@ -490,6 +511,7 @@ class OpenCodeRuntimeClient(BaseRuntimeClient):
                         f"[opencode:event] shared listener 连续失败，已降级为轮询日志: {exc}"
                     )
                     with self._event_bus_lock:
+                        self._event_bus_disabled.add(key)
                         self._event_bus_threads.pop(key, None)
                     return
                 self._log(f"[opencode:event] stage={stage_name} shared listener 失败，将重连: {exc}")

@@ -1066,6 +1066,45 @@ def verify_opencode_structured_output_probe_and_modes() -> None:
         if full_body not in detail_content:
             raise AssertionError("opencode poll detail log should contain the full error text")
 
+    class DribblingResponse:
+        def read(self, _size):
+            return b"{"
+
+    import agents.runtime_clients.opencode as opencode_module
+
+    original_monotonic = opencode_module.time.monotonic
+    ticks = iter([0.0, 0.0, 2.0])
+    opencode_module.time.monotonic = lambda: next(ticks)
+    try:
+        try:
+            client._read_response_text(DribblingResponse(), timeout_seconds=1)
+        except RuntimeError as exc:
+            if "timed out" not in str(exc):
+                raise AssertionError(f"unexpected response read timeout error: {exc}")
+        else:
+            raise AssertionError("opencode response reads should enforce a total deadline")
+    finally:
+        opencode_module.time.monotonic = original_monotonic
+
+    disabled_key = client._event_bus_key(FakeConfig())
+    OpenCodeRuntimeClient._event_bus_disabled.add(disabled_key)
+    OpenCodeRuntimeClient._event_bus_threads.pop(disabled_key, None)
+    unsubscribe = client._subscribe_events(
+        "ses_test",
+        stage_name="trace",
+        config=FakeConfig(),
+        seen=set(),
+        seen_permissions=set(),
+    )
+    try:
+        if disabled_key in OpenCodeRuntimeClient._event_bus_threads:
+            raise AssertionError("disabled opencode event bus should not restart during retries")
+        if not any("本次不再启动 /event" in message for message in client.logs):
+            raise AssertionError("disabled opencode event bus should log polling-only fallback")
+    finally:
+        unsubscribe()
+        OpenCodeRuntimeClient._event_bus_disabled.discard(disabled_key)
+
 
 def main() -> None:
     configure_project_root()

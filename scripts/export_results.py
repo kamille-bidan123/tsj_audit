@@ -6,6 +6,7 @@
 此脚本用于将审计检查点合并并导出为多种格式：
 - JSON: 完整的审计结果
 - HTML: 可视化报告
+- MARKDOWN: 每个函数一个 Markdown 审计报告，分别输出全量目录和有漏洞目录
 - SARIF: 静态分析结果交换格式
 - SARIF-ISSUES: 仅包含问题的 SARIF 格式
 
@@ -67,6 +68,7 @@ def main():
         print(f"输出文件已保存到: {args.output_dir}")
         print("- JSON 格式: trace_results_YYYYMMDD_HHMMSS.json")
         print("- HTML 格式: trace_results_YYYYMMDD_HHMMSS.html")
+        print("- Markdown 格式: trace_results_YYYYMMDD_HHMMSS_markdown/ (all/, vulnerable/)")
         print("- SARIF 格式: trace_results_YYYYMMDD_HHMMSS.sarif")
         print("- SARIF 问题格式: trace_results_YYYYMMDD_HHMMSS_issues.sarif")
 

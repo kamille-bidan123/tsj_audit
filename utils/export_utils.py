@@ -8,12 +8,14 @@ from typing import List
 import json
 import datetime
 import re
+from pathlib import Path
 
 # 导出格式常量
 EXPORT_FORMAT_JSON = "json"
 EXPORT_FORMAT_HTML = "html"
 EXPORT_FORMAT_SARIF = "sarif"
 EXPORT_FORMAT_SARIF_ISSUES = "sarif-issues"
+EXPORT_FORMAT_MARKDOWN = "markdown"
 EXPORT_FORMAT_TEXT = "text"
 
 
@@ -82,8 +84,13 @@ def merge_checkpoints_and_export(output_dir: str, debug: bool = False) -> List[T
         searif_path = str(Path(output_dir) / f"{output_filename}_issues.sarif")
         export_results(results, searif_path, EXPORT_FORMAT_SARIF_ISSUES)
 
+        markdown_path = str(Path(output_dir) / f"{output_filename}_markdown")
+        export_results(results, markdown_path, EXPORT_FORMAT_MARKDOWN)
+        if debug:
+            print(f"[导出] Markdown: {markdown_path}", file=sys.stderr)
+
         print(f"\n[完成] 审计完成，共 {len(results)} 个函数")
-        print(f"输出文件: {output_filename}.json, {output_filename}.html")
+        print(f"输出文件: {output_filename}.json, {output_filename}.html, {output_filename}_markdown/")
     else:
         print("\n[警告] 没有找到任何审计结果")
 
@@ -325,7 +332,7 @@ def generate_html(results: List['TraceResult']) -> str:
             overflow: hidden;
             animation: rise-in 0.45s ease both;
         }}
-        .function-card[hidden] {{ display: none; }}
+        .function-card[hidden], .audit-card[hidden], .exploit-card[hidden] {{ display: none; }}
         .function-header {{
             display: grid;
             grid-template-columns: 1fr auto;
@@ -638,6 +645,16 @@ def generate_html(results: List['TraceResult']) -> str:
                 const vulnTypes = card.dataset.vulnTypes ? card.dataset.vulnTypes.split('|') : [];
                 const matchesType = activeType === 'all' || vulnTypes.includes(activeType);
                 card.hidden = !(matchesQuery && matchesRisk && matchesType);
+                syncTypeScopedResults(card);
+            }});
+        }}
+
+        function syncTypeScopedResults(card) {{
+            card.querySelectorAll('.audit-card').forEach((item) => {{
+                item.hidden = !(activeType === 'all' || item.dataset.auditType === activeType);
+            }});
+            card.querySelectorAll('.exploit-card').forEach((item) => {{
+                item.hidden = !(activeType === 'all' || item.dataset.exploitType === activeType);
             }});
         }}
     </script>
@@ -882,7 +899,7 @@ def _render_audit_results(audit_results: list) -> str:
             confidence_label = _confidence_label(audit.confidence)
             confidence_class = _confidence_class(audit.confidence)
             content += f"""
-                <article class="audit-card">
+                <article class="audit-card" data-audit-type="{_escape_attr(audit.vulnerability_type)}">
                     <div class="audit-head">
                         <div class="audit-name">{_escape_html(audit.vulnerability_type)}</div>
                         <div>
@@ -938,7 +955,7 @@ def _render_exploit_results(exploit_results: list) -> str:
             status_class = "tag-danger" if exploit.success else "tag-warning"
             status_label = "利用成功" if exploit.success else "利用失败"
             content += f"""
-                <article class="exploit-card">
+                <article class="exploit-card" data-exploit-type="{_escape_attr(exploit.vulnerability_type)}">
                     <div class="exploit-head">
                         <div class="exploit-name">{_escape_html(exploit.vulnerability_type)}</div>
                         <span class="tag {status_class}">{status_label}</span>
@@ -1043,6 +1060,257 @@ def export_to_json(results: List['TraceResult'], output_path: str) -> str:
     return output_path
 
 
+def export_to_markdown(results: List['TraceResult'], output_path: str) -> str:
+    """
+    导出审计结果为 Markdown 目录。
+
+    Args:
+        results: TraceResult 列表
+        output_path: 输出目录路径
+
+    Returns:
+        输出目录路径
+    """
+    report_dir = Path(output_path)
+    report_dir.mkdir(parents=True, exist_ok=True)
+    _write_markdown_report_dir(results, report_dir / "all")
+    vulnerable_results = [
+        result for result in results
+        if any(audit.is_vulnerable for audit in result.audit_results)
+    ]
+    _write_markdown_report_dir(vulnerable_results, report_dir / "vulnerable")
+    return output_path
+
+
+def _write_markdown_report_dir(results: List['TraceResult'], report_dir: Path) -> None:
+    report_dir.mkdir(parents=True, exist_ok=True)
+    file_entries: list[tuple[int, 'TraceResult', str]] = []
+    used_names: set[str] = set()
+    for idx, result in enumerate(results, 1):
+        filename = _unique_markdown_filename(idx, result.function_info.func_name, used_names)
+        used_names.add(filename)
+        file_entries.append((idx, result, filename))
+        (report_dir / filename).write_text(
+            _render_function_markdown(result, idx),
+            encoding="utf-8",
+        )
+
+    (report_dir / "README.md").write_text(
+        _render_markdown_index(file_entries),
+        encoding="utf-8",
+    )
+
+
+def _render_markdown_index(file_entries: list[tuple[int, 'TraceResult', str]]) -> str:
+    lines = [
+        "# 代码安全审计 Markdown 报告",
+        "",
+        "每个 Markdown 文件对应一个入口函数，包含函数概览、入口代码、Code Map、漏洞审计结果和 PoC 验证结果。",
+        "",
+        "| # | 函数 | 风险 | 漏洞类型 | 报告 |",
+        "|---|---|---|---|---|",
+    ]
+    for idx, result, filename in file_entries:
+        risk, risk_label = _risk_level(result)
+        vulnerable_types = sorted({
+            audit.vulnerability_type
+            for audit in result.audit_results
+            if audit.is_vulnerable and audit.vulnerability_type
+        })
+        type_label = ", ".join(vulnerable_types) if vulnerable_types else "无"
+        func_name = _escape_markdown_table(result.function_info.func_name)
+        lines.append(
+            f"| {idx} | [{func_name}]({filename}) | {_escape_markdown_table(risk_label)} ({risk}) | "
+            f"{_escape_markdown_table(type_label)} | [{filename}]({filename}) |"
+        )
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _render_function_markdown(result: 'TraceResult', idx: int) -> str:
+    func_info = result.function_info
+    vulnerable_count = sum(1 for audit in result.audit_results if audit.is_vulnerable)
+    risk, risk_label = _risk_level(result)
+    lines = [
+        f"# {func_info.func_name}",
+        "",
+        "## 函数概览",
+        "",
+        f"- 序号：`{idx}`",
+        f"- 文件：`{func_info.file_path}`",
+        f"- 行号：`{func_info.start_line}-{func_info.end_line}`",
+        f"- Skill：`{func_info.skill or '未指定'}`",
+        f"- 风险：{risk_label} (`{risk}`)",
+        f"- 审计类型数：`{len(result.audit_results)}`",
+        f"- 漏洞命中数：`{vulnerable_count}`",
+        f"- Code Map 节点：`{len(result.code_map)}`",
+        f"- PoC 结果：`{len(result.exploit_results)}`",
+        "",
+        "## 入口代码",
+        "",
+        _markdown_code_block(func_info.code_snippet, _guess_code_language(func_info.file_path)),
+        "",
+        "## 业务逻辑",
+        "",
+        result.code_logic or "无业务逻辑描述",
+        "",
+        _render_code_map_markdown(result.code_map),
+        "",
+        _render_audit_results_markdown(result.audit_results),
+        "",
+        _render_exploit_results_markdown(result.exploit_results),
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def _render_code_map_markdown(code_map: list) -> str:
+    lines = ["## Code Map", ""]
+    if not code_map:
+        lines.append("暂无代码映射数据")
+        return "\n".join(lines)
+
+    for idx, ctx in enumerate(code_map, 1):
+        lines.extend([
+            f"### {idx}. {ctx.function_name}",
+            "",
+            f"- 文件：`{ctx.file_path}:{ctx.line_start}-{ctx.line_end}`",
+            f"- 入口：{'是' if ctx.is_entry_point else '否'}",
+            f"- 污染源：{ctx.taint_source or '无'}",
+            f"- 污染路径：{ctx.taint_path or '无'}",
+            "",
+            _markdown_code_block(ctx.code_snippet, _guess_code_language(ctx.file_path)),
+            "",
+        ])
+    return "\n".join(lines).rstrip()
+
+
+def _render_audit_results_markdown(audit_results: list) -> str:
+    lines = ["## 漏洞审计结果", ""]
+    if not audit_results:
+        lines.append("暂无漏洞审计结果")
+        return "\n".join(lines)
+
+    for idx, audit in enumerate(audit_results, 1):
+        lines.extend([
+            f"### {idx}. {audit.vulnerability_type}",
+            "",
+            f"- 状态：{'存在漏洞' if audit.is_vulnerable else '未发现'}",
+            f"- 置信度：`{audit.confidence}`",
+            f"- Finding ID：`{audit.finding_id or '无'}`",
+            f"- 标题：{audit.title or '无'}",
+            f"- 严重程度：`{audit.severity or '无'}`",
+            "",
+            "#### 描述",
+            "",
+            audit.description or "无",
+            "",
+            "#### 污点流",
+            "",
+            audit.taint_flow or "无",
+            "",
+            "#### 修复建议",
+            "",
+            audit.recommendation or "无",
+            "",
+            "#### 相关代码上下文",
+            "",
+        ])
+        if audit.code_map:
+            for ctx_idx, ctx in enumerate(audit.code_map, 1):
+                lines.extend([
+                    f"##### {ctx_idx}. {ctx.function_name}",
+                    "",
+                    f"- 文件：`{ctx.file_path}:{ctx.line_start}-{ctx.line_end}`",
+                    "",
+                    _markdown_code_block(ctx.code_snippet, _guess_code_language(ctx.file_path)),
+                    "",
+                ])
+        else:
+            lines.extend(["无", ""])
+    return "\n".join(lines).rstrip()
+
+
+def _render_exploit_results_markdown(exploit_results: list) -> str:
+    lines = ["## 漏洞利用结果", ""]
+    if not exploit_results:
+        lines.append("暂无漏洞利用结果")
+        return "\n".join(lines)
+
+    for idx, exploit in enumerate(exploit_results, 1):
+        lines.extend([
+            f"### {idx}. {exploit.vulnerability_type}",
+            "",
+            f"- 状态：{'利用成功' if exploit.success else '利用失败'}",
+            "",
+            "#### PoC 命令",
+            "",
+            _markdown_code_block(exploit.poc_command, "bash"),
+            "",
+            "#### 执行输出",
+            "",
+            _markdown_code_block(exploit.output or "无", "text"),
+            "",
+            "#### 错误信息",
+            "",
+            _markdown_code_block(exploit.error or "无", "text"),
+            "",
+        ])
+    return "\n".join(lines).rstrip()
+
+
+def _unique_markdown_filename(idx: int, func_name: str, used_names: set[str]) -> str:
+    base_name = _sanitize_markdown_filename(func_name)
+    filename = f"{idx:03d}_{base_name}.md"
+    if filename not in used_names:
+        return filename
+
+    suffix = 2
+    while True:
+        filename = f"{idx:03d}_{base_name}_{suffix}.md"
+        if filename not in used_names:
+            return filename
+        suffix += 1
+
+
+def _sanitize_markdown_filename(text: str) -> str:
+    sanitized = re.sub(r"[^A-Za-z0-9._-]+", "_", text).strip("._-")
+    return sanitized or "function"
+
+
+def _markdown_code_block(value: str | None, language: str = "") -> str:
+    text = value or ""
+    fence = "```"
+    while fence in text:
+        fence += "`"
+    language_suffix = language if language else ""
+    return f"{fence}{language_suffix}\n{text}\n{fence}"
+
+
+def _guess_code_language(file_path: str) -> str:
+    suffix = Path(file_path).suffix.lower()
+    return {
+        ".c": "c",
+        ".h": "c",
+        ".cc": "cpp",
+        ".cpp": "cpp",
+        ".cxx": "cpp",
+        ".hpp": "cpp",
+        ".hxx": "cpp",
+        ".py": "python",
+        ".js": "javascript",
+        ".ts": "typescript",
+        ".java": "java",
+        ".go": "go",
+        ".rs": "rust",
+        ".sh": "bash",
+    }.get(suffix, "text")
+
+
+def _escape_markdown_table(text: str) -> str:
+    return _escape_html(str(text)).replace("|", "\\|").replace("\n", " ")
+
+
 def export_results(
     results: List['TraceResult'],
     output_path: str,
@@ -1067,6 +1335,8 @@ def export_results(
         return export_to_sarif(results, output_path)
     elif format == EXPORT_FORMAT_SARIF_ISSUES:
         return export_to_sarif_issues_only(results, output_path)
+    elif format == EXPORT_FORMAT_MARKDOWN:
+        return export_to_markdown(results, output_path)
     else:
         raise ValueError(f"不支持的格式：{format}")
 
