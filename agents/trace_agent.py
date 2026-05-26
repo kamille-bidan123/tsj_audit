@@ -15,6 +15,7 @@ from datetime import datetime
 # 导入共享模型
 from models import EntrySpec, FunctionInfo, CodeContext, TraceResult, AuditResult
 from utils.export_utils import merge_checkpoints_and_export
+from utils.path_utils import normalize_function_info_file_path, normalize_trace_results_file_paths
 
 
 class TraceAgent:
@@ -73,13 +74,14 @@ class TraceAgent:
         checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
         checkpoint_file = self._get_checkpoint_file(output_dir, result.function_info.func_name)
-        data = result.model_dump()
+        saved_result = normalize_trace_results_file_paths([result], None)[0]
+        data = saved_result.model_dump()
 
         # 添加元信息
         data["_checkpoint_meta"] = {
             "saved_at": datetime.now().isoformat(),
-            "func_name": result.function_info.func_name,
-            "file_path": result.function_info.file_path,
+            "func_name": saved_result.function_info.func_name,
+            "file_path": saved_result.function_info.file_path,
         }
 
         with open(checkpoint_file, "w", encoding="utf-8") as f:
@@ -101,10 +103,11 @@ class TraceAgent:
         safe_func_name = "".join(c if c.isalnum() or c in ("_", "-") else "_" for c in func_info.func_name)
 
         conversation_file = conversations_dir / f"{safe_func_name}.json"
+        saved_func_info = normalize_function_info_file_path(func_info, None)
 
         # 准备保存对话历史
         conversation_data = {
-            "function_info": func_info.model_dump(),
+            "function_info": saved_func_info.model_dump(),
             "conversation_history": messages,
             "saved_at": datetime.now().isoformat(),
             "agent": agent_name

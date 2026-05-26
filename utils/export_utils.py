@@ -9,6 +9,7 @@ import json
 import datetime
 import re
 from pathlib import Path
+from utils.path_utils import normalize_trace_results_file_paths
 
 # 导出格式常量
 EXPORT_FORMAT_JSON = "json"
@@ -36,6 +37,8 @@ def merge_checkpoints_and_export(output_dir: str, debug: bool = False) -> List[T
     import datetime
     from models import TraceResult
 
+    project_path = _load_project_path_from_output_config(output_dir)
+
     checkpoint_dir = Path(output_dir) / "checkpoints"
     checkpoint_files = sorted(glob.glob(str(checkpoint_dir / "*.json")))
 
@@ -49,7 +52,10 @@ def merge_checkpoints_and_export(output_dir: str, debug: bool = False) -> List[T
                 data = json.load(f)
             meta = data.pop("_checkpoint_meta", None)
             if meta:
-                result = TraceResult.model_validate(data)
+                result = normalize_trace_results_file_paths(
+                    [TraceResult.model_validate(data)],
+                    project_path,
+                )[0]
                 results.append(result)
                 if debug:
                     print(f"  [合并] {checkpoint_file}", file=sys.stderr)
@@ -95,6 +101,18 @@ def merge_checkpoints_and_export(output_dir: str, debug: bool = False) -> List[T
         print("\n[警告] 没有找到任何审计结果")
 
     return results
+
+
+def _load_project_path_from_output_config(output_dir: str) -> str | None:
+    config_file = Path(output_dir) / "audit_config.json"
+    if not config_file.exists():
+        return None
+    try:
+        data = json.loads(config_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    project_path = data.get("project_path") if isinstance(data, dict) else None
+    return project_path if isinstance(project_path, str) and project_path else None
 
 
 def generate_html(results: List['TraceResult']) -> str:
@@ -1036,7 +1054,7 @@ def export_to_html(results: List['TraceResult'], output_path: str) -> str:
     Returns:
         输出文件路径
     """
-    html_content = generate_html(results)
+    html_content = generate_html(normalize_trace_results_file_paths(results, None))
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(html_content)
     return output_path
@@ -1054,7 +1072,7 @@ def export_to_json(results: List['TraceResult'], output_path: str) -> str:
         输出文件路径
     """
     from models import TraceResult
-    data = [r.model_dump() for r in results]
+    data = [r.model_dump() for r in normalize_trace_results_file_paths(results, None)]
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
     return output_path
@@ -1073,9 +1091,10 @@ def export_to_markdown(results: List['TraceResult'], output_path: str) -> str:
     """
     report_dir = Path(output_path)
     report_dir.mkdir(parents=True, exist_ok=True)
-    _write_markdown_report_dir(results, report_dir / "all")
+    normalized_results = normalize_trace_results_file_paths(results, None)
+    _write_markdown_report_dir(normalized_results, report_dir / "all")
     vulnerable_results = [
-        result for result in results
+        result for result in normalized_results
         if any(audit.is_vulnerable for audit in result.audit_results)
     ]
     _write_markdown_report_dir(vulnerable_results, report_dir / "vulnerable")
@@ -1314,7 +1333,7 @@ def _escape_markdown_table(text: str) -> str:
 def export_results(
     results: List['TraceResult'],
     output_path: str,
-    format: str = EXPORT_FORMAT_JSON
+    format: str = EXPORT_FORMAT_JSON,
 ) -> str:
     """
     导出审计结果
@@ -1353,6 +1372,7 @@ def export_to_sarif(results: List['TraceResult'], output_path: str) -> str:
         输出文件路径
     """
     import datetime
+    results = normalize_trace_results_file_paths(results, None)
 
     # 收集所有漏洞类型以定义规则
     vulnerability_types = set()
@@ -1653,6 +1673,7 @@ def export_to_sarif_issues_only(results: List['TraceResult'], output_path: str) 
         输出文件路径
     """
     import datetime
+    results = normalize_trace_results_file_paths(results, None)
 
     # 收集所有漏洞类型以定义规则
     vulnerability_types = set()

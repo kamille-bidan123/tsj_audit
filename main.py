@@ -13,6 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from cli import parse_args
 from config import Config
 from models import EntrySpec
+from utils.path_utils import normalize_entry_specs_file_paths
 from utils.terminal_status import get_terminal_status
 
 
@@ -79,11 +80,12 @@ def discover_attack_surface_entries(config: Config) -> str:
         output_dir=config.output_dir,
     )
     entries: list[EntrySpec] = agent.discover()
+    saved_entries = normalize_entry_specs_file_paths(entries, None)
 
     output_dir = Path(config.output_dir or "output")
     output_dir.mkdir(parents=True, exist_ok=True)
     with open(discovered_file, "w", encoding="utf-8") as f:
-        json.dump([entry.model_dump() for entry in entries], f, indent=2, ensure_ascii=False)
+        json.dump([entry.model_dump() for entry in saved_entries], f, indent=2, ensure_ascii=False)
 
     log(f"[发现入口] 使用 skill {config.attack_surface_skill} 发现 {len(entries)} 个入口函数")
     log(f"[发现入口] 已保存: {discovered_file}")
