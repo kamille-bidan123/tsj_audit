@@ -740,6 +740,8 @@ def verify_opencode_runtime_uses_current_api_and_reports_bad_json() -> None:
                 return {"id": "ses_test"}
             if path == "/session/ses_test/message":
                 return {"ok": True}
+            if method == "DELETE" and path == "/session/ses_test":
+                return True
             if path == "/permission/per_test/reply":
                 return True
             raise AssertionError(f"unexpected opencode path: {path}")
@@ -757,7 +759,7 @@ def verify_opencode_runtime_uses_current_api_and_reports_bad_json() -> None:
     )
     if result != {"ok": True}:
         raise AssertionError("opencode runtime should return prompt response")
-    if client.paths != ["/session", "/session/ses_test/message"]:
+    if client.paths != ["/session", "/session/ses_test/message", "/session/ses_test"]:
         raise AssertionError(f"opencode runtime should use current API paths, got {client.paths}")
     if "format" in client.bodies[-1]:
         raise AssertionError("opencode prompt fallback mode should not send format=json_schema")
@@ -934,6 +936,8 @@ def verify_opencode_structured_output_probe_and_modes() -> None:
                 if isinstance(outcome, Exception):
                     raise outcome
                 return outcome
+            if method == "DELETE" and path.startswith("/session/"):
+                return True
             raise AssertionError(f"unexpected opencode path: {path}")
 
     client = FakeOpenCodeRuntimeClient([{"info": {"structured": {"ok": True}}, "parts": []}])
@@ -945,6 +949,8 @@ def verify_opencode_structured_output_probe_and_modes() -> None:
     )
     if result["info"]["structured"]["ok"] is not True:
         raise AssertionError("opencode runtime should return structured response")
+    if "/session/ses_1" not in client.paths:
+        raise AssertionError("opencode runtime should delete completed sessions")
     if client.bodies[-1].get("format", {}).get("type") != "json_schema":
         raise AssertionError("opencode json_schema mode should send format=json_schema")
     if "function_info" not in client.bodies[-1]["format"]["schema"].get("properties", {}):
@@ -957,6 +963,8 @@ def verify_opencode_structured_output_probe_and_modes() -> None:
         config=FakeConfig(),
         stage_name="entry_discovery",
     )
+    if "/session/ses_1" not in discovery_client.paths:
+        raise AssertionError("opencode runtime should delete discovery sessions")
     discovery_schema = discovery_client.bodies[-1]["format"]["schema"]
     schema_text = json.dumps(discovery_schema, ensure_ascii=False)
     for rejected_key in ("$defs", "$ref", "anyOf", "description", "title", "additionalProperties", "default"):
@@ -978,6 +986,8 @@ def verify_opencode_structured_output_probe_and_modes() -> None:
         raise AssertionError("probe should try json_schema first")
     if len(probe_client.bodies) != 1:
         raise AssertionError("probe should not retry with no-thinking variants; users own thinking mode")
+    if "/session/ses_1" not in probe_client.paths:
+        raise AssertionError("opencode structured output probe should delete failed probe sessions")
 
     class PollProbeClient(FakeOpenCodeRuntimeClient):
         def _handle_pending_permissions(self, *_args, **_kwargs):
@@ -1036,6 +1046,8 @@ def verify_opencode_structured_output_probe_and_modes() -> None:
         raise AssertionError("opencode schema rejection should not silently downgrade")
     if len(schema_reject_client.bodies) != 1 or "format" not in schema_reject_client.bodies[0]:
         raise AssertionError("opencode schema rejection should preserve the original json_schema attempt")
+    if "/session/ses_1" not in schema_reject_client.paths:
+        raise AssertionError("opencode runtime should delete sessions when message requests fail")
     import tempfile
     import urllib.error
 

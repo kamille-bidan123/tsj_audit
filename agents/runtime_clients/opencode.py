@@ -78,6 +78,7 @@ class OpenCodeRuntimeClient(BaseRuntimeClient):
             return response
         finally:
             stop_events.set()
+            self._delete_session(session_id, config)
 
     def probe_structured_output(self, config) -> OpenCodeStructuredOutputDecision:
         """Probe the current opencode provider/model and choose an output mode."""
@@ -120,11 +121,14 @@ class OpenCodeRuntimeClient(BaseRuntimeClient):
             force_json_schema=True,
             include_tools=False,
         )
-        response = self._request("POST", f"/session/{session_id}/message", body, config)
-        self._raise_for_assistant_error(response)
-        output = extract_structured_model(response, _StructuredOutputProbeModel)
-        if output.ok is not True:
-            raise RuntimeError(f"opencode structured output probe returned unexpected value: {output}")
+        try:
+            response = self._request("POST", f"/session/{session_id}/message", body, config)
+            self._raise_for_assistant_error(response)
+            output = extract_structured_model(response, _StructuredOutputProbeModel)
+            if output.ok is not True:
+                raise RuntimeError(f"opencode structured output probe returned unexpected value: {output}")
+        finally:
+            self._delete_session(session_id, config)
 
     def _message_body(
         self,
@@ -232,6 +236,13 @@ class OpenCodeRuntimeClient(BaseRuntimeClient):
 
     def _is_format_schema_rejection(self, exc: Exception) -> bool:
         return self._is_format_schema_error_text(str(exc))
+
+    def _delete_session(self, session_id: str, config) -> None:
+        try:
+            self._request("DELETE", f"/session/{session_id}", None, config)
+            self._log(f"[opencode] session={session_id} 已删除")
+        except Exception as exc:
+            self._log(f"[opencode] session={session_id} 删除失败: {exc}")
 
     def _request(self, method: str, path: str, body: Any, config) -> Any:
         base_url = config.opencode_base_url.rstrip("/")
