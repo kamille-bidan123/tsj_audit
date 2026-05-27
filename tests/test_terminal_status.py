@@ -56,6 +56,17 @@ class AuditStatusAppFocusTest(unittest.TestCase):
         self.assertFalse(table.display)
         log.focus.assert_called_once_with()
 
+    def test_confirmation_actions_reply_to_owner(self):
+        owner = Mock()
+        app = AuditStatusApp.__new__(AuditStatusApp)
+        app.owner = owner
+
+        app.action_confirm_yes()
+        app.action_confirm_no()
+
+        owner._reply_confirmation_from_tui.assert_any_call(True)
+        owner._reply_confirmation_from_tui.assert_any_call(False)
+
 
 class AuditStatusAppLogFollowTest(unittest.TestCase):
     def test_user_log_scroll_disables_auto_scroll(self):
@@ -95,6 +106,38 @@ class AuditStatusAppLogFollowTest(unittest.TestCase):
         self.assertTrue(log.auto_scroll)
         log.scroll_end.assert_called_once_with(animate=False)
         log.focus.assert_called_once_with()
+
+
+class TerminalStatusConfirmationTest(unittest.TestCase):
+    def test_confirmation_reply_sets_waiting_event(self):
+        status = TerminalStatus()
+        status.confirmation_prompt = "continue?"
+        status._confirmation_reply = False
+        status._confirmation_event.clear()
+
+        status._reply_confirmation_from_tui(True)
+
+        self.assertTrue(status._confirmation_reply)
+        self.assertTrue(status._confirmation_event.is_set())
+
+    def test_confirmation_panel_has_priority_over_permission_panel(self):
+        owner = SimpleNamespace(
+            confirmation_prompt="继续 prompt JSON fallback?",
+            permission_request={"id": "per_test"},
+            permission_session_id="ses_test",
+        )
+        panel = Mock()
+        app = AuditStatusApp.__new__(AuditStatusApp)
+        app.owner = owner
+        app.query_one = Mock(return_value=panel)
+
+        app._refresh_permission()
+
+        self.assertTrue(panel.display)
+        panel.update.assert_called_once()
+        rendered = panel.update.call_args.args[0]
+        self.assertIn("需要确认", rendered)
+        self.assertIn("按 y=继续", rendered)
 
 
 class AuditStatusAppLifecycleTest(unittest.TestCase):

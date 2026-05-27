@@ -452,12 +452,12 @@ class OpenCodeRuntimeClient(BaseRuntimeClient):
                 self._event_bus_subscribers.pop(key, None)
 
     def _event_bus_key(self, config) -> tuple[str, str]:
-        return (config.opencode_base_url.rstrip("/"), str(self.project_path))
+        return (config.opencode_base_url.rstrip("/"),)
 
     def _run_shared_event_bus(self, key: tuple[str, str], stage_name: str, config) -> None:
         base_url = config.opencode_base_url.rstrip("/")
         request = urllib.request.Request(
-            f"{base_url}{self._path_with_project_context('/event')}",
+            f"{base_url}/event",
             method="GET",
             headers={"Accept": "text/event-stream"},
         )
@@ -465,10 +465,6 @@ class OpenCodeRuntimeClient(BaseRuntimeClient):
         started_logged = False
         fast_disconnects = 0
         while True:
-            with self._event_bus_lock:
-                if not self._event_bus_subscribers.get(key):
-                    self._event_bus_threads.pop(key, None)
-                    return
             try:
                 connected_at = time.monotonic()
                 with opener.open(request, timeout=10) as response:  # noqa: S310 - user-configured local agent server.
@@ -476,10 +472,6 @@ class OpenCodeRuntimeClient(BaseRuntimeClient):
                         self._log(f"[opencode:event] stage={stage_name} shared listener 已启动")
                         started_logged = True
                     while True:
-                        with self._event_bus_lock:
-                            if not self._event_bus_subscribers.get(key):
-                                self._event_bus_threads.pop(key, None)
-                                return
                         try:
                             line = response.readline()
                         except (TimeoutError, socket.timeout):
@@ -514,8 +506,8 @@ class OpenCodeRuntimeClient(BaseRuntimeClient):
                 with self._event_bus_lock:
                     has_subscribers = bool(self._event_bus_subscribers.get(key))
                 if not has_subscribers:
-                    self._event_bus_threads.pop(key, None)
-                    return
+                    threading.Event().wait(2)
+                    continue
                 fast_disconnects += 1
                 if fast_disconnects >= 3:
                     self._log(

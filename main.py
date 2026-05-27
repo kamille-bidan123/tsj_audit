@@ -124,12 +124,16 @@ def initialize_runtime_output_format(config: Config) -> None:
     if not config.opencode_require_prompt_fallback_confirmation:
         return
 
-    status.pause_input()
-    try:
-        choice = input("确认继续使用 prompt JSON fallback 吗？输入 y 继续，其他输入终止: ").strip().lower()
-    finally:
-        status.resume_input()
-    if choice not in {"y", "yes"}:
+    prompt = "确认继续使用 prompt JSON fallback 吗？"
+    confirmed = status.ask_confirmation(prompt)
+    if confirmed is None:
+        status.pause_input()
+        try:
+            choice = input(f"{prompt} 输入 y 继续，其他输入终止: ").strip().lower()
+        finally:
+            status.resume_input()
+        confirmed = choice in {"y", "yes"}
+    if not confirmed:
         raise SystemExit("用户未确认 prompt JSON fallback，程序终止")
 
 

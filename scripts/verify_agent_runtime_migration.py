@@ -1020,6 +1020,10 @@ def verify_opencode_structured_output_probe_and_modes() -> None:
     if "/permission" not in poll_client.paths:
         raise AssertionError("opencode json_schema mode should still poll permissions")
 
+    event_key_client = FakeOpenCodeRuntimeClient([])
+    if event_key_client._event_bus_key(FakeConfig()) != ("http://127.0.0.1:4096",):
+        raise AssertionError("opencode /event bus should be scoped to the serve base URL, not project directory")
+
     fallback_client = FakeOpenCodeRuntimeClient(
         [
             RuntimeError("tool_choice unsupported"),

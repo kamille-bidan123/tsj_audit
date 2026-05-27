@@ -182,6 +182,8 @@ class AuditStatusApp(App):
         Binding("o", "permission_once", "批准本次", show=False),
         Binding("a", "permission_always", "永久批准", show=False),
         Binding("r", "permission_reject", "拒绝", show=False),
+        Binding("y", "confirm_yes", "确认", show=False),
+        Binding("n", "confirm_no", "取消", show=False),
         Binding("q", "noop", "运行中不可退出", show=False),
     ]
 
@@ -279,6 +281,12 @@ class AuditStatusApp(App):
     def action_permission_reject(self) -> None:
         self.owner._reply_permission_from_tui("reject")
 
+    def action_confirm_yes(self) -> None:
+        self.owner._reply_confirmation_from_tui(True)
+
+    def action_confirm_no(self) -> None:
+        self.owner._reply_confirmation_from_tui(False)
+
     def action_noop(self) -> None:
         if self.target_finished:
             self.exit()
@@ -343,6 +351,15 @@ class AuditStatusApp(App):
     def _refresh_permission(self) -> None:
         panel = self.query_one("#permission", Static)
         request = self.owner.permission_request
+        confirmation = self.owner.confirmation_prompt
+        if confirmation is not None:
+            panel.display = True
+            panel.update(
+                "[bold yellow]需要确认[/bold yellow]\n"
+                f"{confirmation}\n"
+                "[bold]按 y=继续, n=终止[/bold]"
+            )
+            return
         if request is None:
             panel.display = False
             panel.update("")
@@ -386,6 +403,9 @@ class TerminalStatus:
         self.permission_session_id = "-"
         self._permission_event = threading.Event()
         self._permission_reply = "reject"
+        self.confirmation_prompt: str | None = None
+        self._confirmation_event = threading.Event()
+        self._confirmation_reply = False
 
     def can_run_tui(self) -> bool:
         return self.enabled
@@ -552,12 +572,34 @@ class TerminalStatus:
             self._refresh()
         return reply
 
+    def ask_confirmation(self, prompt: str) -> bool | None:
+        if not self.app:
+            return None
+        with self.lock:
+            self.confirmation_prompt = prompt
+            self._confirmation_reply = False
+            self._confirmation_event.clear()
+            self._refresh()
+        self._confirmation_event.wait()
+        with self.lock:
+            reply = self._confirmation_reply
+            self.confirmation_prompt = None
+            self._refresh()
+        return reply
+
     def _reply_permission_from_tui(self, reply: str) -> None:
         with self.lock:
             if self.permission_request is None:
                 return
             self._permission_reply = reply
             self._permission_event.set()
+
+    def _reply_confirmation_from_tui(self, reply: bool) -> None:
+        with self.lock:
+            if self.confirmation_prompt is None:
+                return
+            self._confirmation_reply = reply
+            self._confirmation_event.set()
 
     def _state_for(self, name: str) -> FunctionState:
         for state in self.functions:
