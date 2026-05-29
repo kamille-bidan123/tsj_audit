@@ -135,17 +135,26 @@ class Config(BaseSettings):
         return value
 
 
-def find_env_file() -> Path:
+def find_env_file(config_file: str | Path | None = None) -> Path:
     """
     查找 .env 文件
 
     查找顺序:
-    1. 当前工作目录 (cwd)
-    2. 用户主目录 (~)
+    1. 显式指定的配置文件
+    2. 当前工作目录 (cwd)
+    3. 用户主目录 (~)
 
     Returns:
         .env 文件路径
     """
+    if config_file:
+        path = Path(config_file).expanduser()
+        if not path.exists():
+            raise FileNotFoundError(f"指定的配置文件不存在: {path}")
+        if not path.is_file():
+            raise ValueError(f"指定的配置路径不是文件: {path}")
+        return path
+
     # 1. 当前工作目录
     cwd_env = Path.cwd() / ".env"
     if cwd_env.exists():
@@ -199,9 +208,10 @@ def apply_cli_args(cli_args: dict) -> Config:
     get_settings.cache_clear()
 
     # 过滤 None 值
-    filtered_args = {k: v for k, v in cli_args.items() if v is not None}
+    config_file = cli_args.get("config")
+    filtered_args = {k: v for k, v in cli_args.items() if v is not None and k != "config"}
 
-    env_file = find_env_file()
+    env_file = find_env_file(config_file)
     return Config(_env_file=env_file, **filtered_args)
 
 
@@ -223,13 +233,14 @@ def init_settings(cli_args: dict | None = None) -> Config:
 
     get_settings.cache_clear()
 
-    env_file = find_env_file()
-
     if cli_args:
         # 过滤 None 值
-        filtered_args = {k: v for k, v in cli_args.items() if v is not None}
+        config_file = cli_args.get("config")
+        filtered_args = {k: v for k, v in cli_args.items() if v is not None and k != "config"}
+        env_file = find_env_file(config_file)
         _settings = Config(_env_file=env_file, **filtered_args)
     else:
+        env_file = find_env_file()
         _settings = Config(_env_file=env_file)
 
     return _settings

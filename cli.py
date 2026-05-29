@@ -23,6 +23,9 @@ def parse_args() -> argparse.Namespace:
   # 基本使用
   python main.py
 
+  # 指定配置文件
+  python main.py --config configs/opencode.env
+
   # 调试模式
   python main.py --debug
 
@@ -31,10 +34,18 @@ def parse_args() -> argparse.Namespace:
 
 配置文件:
   程序会尝试从以下位置加载 .env 文件 (优先级从高到低):
-  1. 当前工作目录 (./.env)
-  2. 用户主目录 (~/.env)
+  1. --config 指定的文件
+  2. 当前工作目录 (./.env)
+  3. 用户主目录 (~/.env)
   命令行参数会覆盖配置文件中的值
         """,
+    )
+
+    parser.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help="显式指定 .env 风格配置文件；命令行参数仍会覆盖该文件",
     )
 
     # ========== Runtime 配置 ==========

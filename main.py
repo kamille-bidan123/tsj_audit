@@ -97,17 +97,27 @@ def initialize_runtime_output_format(config: Config) -> None:
     if (config.agent_runtime or "").strip().lower() != "opencode":
         return
 
+    from agents.runtime_clients.opencode import OpenCodeRuntimeClient
+
+    status = get_terminal_status()
+    status.set_stage("Runtime Probe", function_name="-", audit_type="-")
+    client = OpenCodeRuntimeClient(project_path=config.project_path, debug=config.debug)
+    log(f"[opencode] 检查 serve 可用性: {config.opencode_base_url}")
+    try:
+        client.health_check(config)
+    except Exception as exc:
+        raise SystemExit(
+            "[opencode] serve 不可用，审计已停止，未进入函数循环。\n"
+            f"原因: {exc}\n"
+            "请先启动: opencode serve --hostname 127.0.0.1 --port 4096"
+        ) from exc
+
     mode = (config.opencode_structured_output_mode or "auto").strip()
     if mode != "auto":
         log(f"[opencode] 结构化输出模式使用配置值: {mode}")
         return
 
-    from agents.runtime_clients.opencode import OpenCodeRuntimeClient
-
-    status = get_terminal_status()
-    status.set_stage("Runtime Probe", function_name="-", audit_type="-")
     log("[opencode] 开始结构化输出兼容性 demo 测试")
-    client = OpenCodeRuntimeClient(project_path=config.project_path, debug=config.debug)
     decision = client.probe_structured_output(config)
     config.opencode_structured_output_mode = decision.mode
     log(f"[opencode] 结构化输出模式: {decision.mode} - {decision.message}")
@@ -238,10 +248,7 @@ def main():
     status = get_terminal_status()
 
     def run() -> None:
-        try:
-            run_trace_agent(config)
-        finally:
-            status.stop()
+        run_trace_agent(config)
 
     try:
         status.run_with(run)

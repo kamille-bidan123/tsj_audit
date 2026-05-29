@@ -81,8 +81,15 @@ uv run python main.py \
 配置优先级从高到低：
 
 1. 命令行参数
-2. 当前目录或用户主目录下的 `.env`
-3. 代码默认值
+2. `--config` 指定的 `.env` 风格配置文件
+3. 当前目录或用户主目录下的 `.env`
+4. 代码默认值
+
+显式指定配置文件：
+
+```bash
+uv run python main.py --config configs/opencode.env
+```
 
 常用配置项：
 
@@ -133,20 +140,25 @@ opencode_enable_event_stream = false
 
 默认关闭 `/event` SSE 监听，使用轮询获取 tool/permission 日志。
 
-## 终端界面
+## 运行时 Web 界面
 
-在交互式终端中运行 `python3 main.py` 或 `uv run python main.py` 时，工具会启动 Textual TUI：
+运行 `python3 main.py` 或 `uv run python main.py` 时，工具会保留普通命令行日志输出，并默认启动本地实时状态页面：
 
-- 上方显示实时日志，包括 opencode tool call、permission、阶段输出。
-- 底部固定显示当前阶段、当前审计函数、当前漏洞类型、runtime 和 session。
-- 按 `g` 展开/收起已审计函数表。
-- 手动滚动日志后会暂停新日志自动滚到底部；按 `l` 恢复日志自动跟随并跳到底部。
-- 审计流程结束或异常退出后，TUI 会保持打开便于查看日志；此时按 `q` 退出。
-- Python `stderr` 输出会以红色写入日志窗口；异常退出时完整 traceback 也会显示在 TUI 日志中。
-- TUI 默认关闭鼠标捕获，日志窗口可用终端原生拖选复制；Textual 选区也可用 `Ctrl+C` 复制。
-- opencode 触发 write/edit/patch 等权限请求时，会在界面中高亮显示；按 `o` 批准本次，`a` 永久批准，`r` 拒绝。
+```text
+[Web UI] 实时状态页面: http://127.0.0.1:8765/
+```
 
-如果 stdout/stderr/stdin 不是 TTY，或者未安装 Textual，会自动退回普通日志模式。
+如果 `8765` 已被占用，会自动尝试后续端口。浏览器页面提供原 TUI 的运行时能力：
+
+- 实时日志，包括 opencode tool call、permission、阶段输出；命令行仍同步显示。
+- 当前阶段、当前审计函数、当前漏洞类型、runtime 和 session。
+- 已发现/已审计函数表。
+- 日志自动跟随开关；手动滚动日志后会暂停跟随。
+- opencode 触发 write/edit/patch 等权限请求时，可在页面中批准本次、永久批准或拒绝。
+- prompt JSON fallback 需要确认时，可在页面中继续或终止。
+- 异常退出时完整 traceback 会写入输出目录的 `tui_error.log`，命令行也会显示异常信息。
+
+最终审计报告仍由现有 HTML 导出流程生成；运行时 Web 页面只用于替代旧的 Textual TUI。
 
 ## 扩展管理界面
 

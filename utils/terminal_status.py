@@ -15,6 +15,8 @@ from typing import Any, Callable, Optional
 from rich.markup import escape
 from rich.text import Text
 
+from utils.web_status import RuntimeStatusServer
+
 
 try:
     from textual.app import App, ComposeResult
@@ -134,6 +136,40 @@ class _TuiStream:
             self.owner.log(f"[{self.style}]{escape(line)}[/{self.style}]")
         else:
             self.owner.log(line)
+
+
+class _TeeStream:
+    """Mirror command-line output into the live web status log."""
+
+    def __init__(self, owner: "TerminalStatus", original, *, stream: str):
+        self.owner = owner
+        self.original = original
+        self.stream = stream
+        self._buffer = ""
+
+    def write(self, text: str) -> int:
+        written = self.original.write(text)
+        self._buffer += text
+        while "\n" in self._buffer:
+            line, self._buffer = self._buffer.split("\n", 1)
+            if line:
+                self.owner.log(line, stream=self.stream)
+        return written if isinstance(written, int) else len(text)
+
+    def flush(self) -> None:
+        self.original.flush()
+        if self._buffer:
+            self.owner.log(self._buffer, stream=self.stream)
+            self._buffer = ""
+
+    def isatty(self) -> bool:
+        return self.original.isatty()
+
+    def fileno(self) -> int:
+        return self.original.fileno()
+
+    def __getattr__(self, name: str):
+        return getattr(self.original, name)
 
 
 class AuditStatusApp(App):
@@ -385,8 +421,10 @@ class TerminalStatus:
     """Process-wide facade used by the audit pipeline."""
 
     def __init__(self) -> None:
-        self.enabled = bool(_TEXTUAL_AVAILABLE and sys.stderr.isatty() and sys.stdin.isatty())
+        self.enabled = False
         self.app: Optional[AuditStatusApp] = None
+        self.web_server: RuntimeStatusServer | None = None
+        self.web_url = ""
         self.lock = threading.RLock()
         self._app_ready = threading.Event()
         self._target_error: BaseException | None = None
@@ -406,30 +444,40 @@ class TerminalStatus:
         self.confirmation_prompt: str | None = None
         self._confirmation_event = threading.Event()
         self._confirmation_reply = False
+        self.logs: list[dict[str, Any]] = []
+        self._log_seq = 0
 
     def can_run_tui(self) -> bool:
-        return self.enabled
+        return False
 
     def run_with(self, target: Callable[[], None]) -> None:
-        if not self.enabled:
-            target()
-            return
         self._target_error = None
         self._target_traceback = ""
         self._target_error_log_path = None
-        self.tui_exit_hint = "运行中按 q 不退出"
-        self.app = AuditStatusApp(self, target)
+        self.tui_exit_hint = "运行中；Web UI 随进程退出"
+        self._ensure_web_ui()
+        old_stdout = sys.stdout
+        old_stderr = sys.stderr
+        sys.stdout = _TeeStream(self, old_stdout, stream="stdout")
+        sys.stderr = _TeeStream(self, old_stderr, stream="stderr")
+        had_error = False
         try:
-            self.app.run(mouse=False)
+            target()
+        except BaseException as exc:
+            had_error = True
+            log_path = self._capture_target_error(exc)
+            detail = f"；完整 traceback: {log_path}" if log_path else ""
+            self.log(f"运行失败: {exc!r}{detail}", stream="stderr")
+            traceback_text = self._target_traceback or traceback.format_exc()
+            for line in traceback_text.rstrip().splitlines():
+                self.log(line, stream="stderr")
+            raise
         finally:
-            self.app = None
-            self._app_ready.clear()
-        if self._target_error is not None:
-            if self._target_traceback:
-                print(self._target_traceback, file=sys.stderr, flush=True)
-            if self._target_error_log_path:
-                print(f"[错误] 完整异常日志: {self._target_error_log_path}", file=sys.stderr, flush=True)
-            raise self._target_error
+            sys.stdout.flush()
+            sys.stderr.flush()
+            sys.stdout = old_stdout
+            sys.stderr = old_stderr
+            self.mark_tui_finished(error=had_error)
 
     def start(self) -> None:
         if self.app:
@@ -441,14 +489,20 @@ class TerminalStatus:
                 self.app.call_from_thread(self.app.exit)
             except Exception:
                 pass
+        if self.web_server:
+            try:
+                self.web_server.stop()
+            except Exception:
+                pass
+            self.web_server = None
 
     def mark_tui_finished(self, *, error: bool) -> None:
         with self.lock:
             if error:
                 self.stage = "异常退出"
-                self.tui_exit_hint = "异常后 TUI 保持打开，按 q 退出"
+                self.tui_exit_hint = "异常退出；查看命令行或最终 HTML 报告"
             else:
-                self.tui_exit_hint = "流程结束，按 q 退出"
+                self.tui_exit_hint = "流程结束；查看命令行或最终 HTML 报告"
             self._refresh()
 
     def _capture_target_error(self, exc: BaseException) -> Path | None:
@@ -484,7 +538,19 @@ class TerminalStatus:
     def resume_input(self) -> None:
         return
 
-    def log(self, line: str) -> None:
+    def log(self, line: str, *, stream: str = "status") -> None:
+        with self.lock:
+            self._log_seq += 1
+            self.logs.append(
+                {
+                    "seq": self._log_seq,
+                    "time": datetime.now().isoformat(timespec="seconds"),
+                    "stream": stream,
+                    "line": str(line),
+                }
+            )
+            if len(self.logs) > 2000:
+                self.logs = self.logs[-2000:]
         if self.app and self._app_ready.is_set():
             try:
                 self.app.call_from_thread(self.app.write_log, line)
@@ -556,7 +622,7 @@ class TerminalStatus:
             self._refresh()
 
     def ask_permission(self, request: dict[str, Any], *, session_id: str) -> str | None:
-        if not self.app:
+        if not self.app and not self.web_server:
             return None
         with self.lock:
             self.permission_request = request
@@ -573,7 +639,7 @@ class TerminalStatus:
         return reply
 
     def ask_confirmation(self, prompt: str) -> bool | None:
-        if not self.app:
+        if not self.app and not self.web_server:
             return None
         with self.lock:
             self.confirmation_prompt = prompt
@@ -615,6 +681,39 @@ class TerminalStatus:
                 self.app.call_from_thread(self.app.refresh_from_owner)
             except Exception:
                 pass
+
+    def _ensure_web_ui(self) -> None:
+        if self.web_server:
+            return
+        self.web_server = RuntimeStatusServer(self)
+        self.web_url = self.web_server.start()
+        print(f"[Web UI] 实时状态页面: {self.web_url}", file=sys.stderr, flush=True)
+
+    def snapshot(self) -> dict[str, Any]:
+        with self.lock:
+            return {
+                "stage": self.stage,
+                "function_name": self.function_name,
+                "audit_type": self.audit_type,
+                "runtime": self.runtime,
+                "session_id": self.session_id,
+                "exit_hint": self.tui_exit_hint,
+                "web_url": self.web_url,
+                "functions": [
+                    {
+                        "name": item.name,
+                        "file_path": item.file_path,
+                        "stage": item.stage,
+                        "audit_type": item.audit_type,
+                        "status": item.status,
+                    }
+                    for item in self.functions
+                ],
+                "permission_request": self.permission_request,
+                "permission_session_id": self.permission_session_id,
+                "confirmation_prompt": self.confirmation_prompt,
+                "logs": list(self.logs),
+            }
 
 
 _STATUS = TerminalStatus()

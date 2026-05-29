@@ -42,6 +42,14 @@ class OpenCodeRuntimeClient(BaseRuntimeClient):
     _event_bus_subscribers: dict[tuple[str, str], list] = {}
     _event_bus_disabled: set[tuple[str, str]] = set()
 
+    def health_check(self, config) -> None:
+        """Verify opencode serve is reachable before starting a multi-function audit."""
+        session = self._request("POST", "/session", None, config)
+        session_id = session.get("id") or session.get("data", {}).get("id")
+        if not session_id:
+            raise RuntimeError(f"opencode health check did not return a session id: {session}")
+        self._delete_session(session_id, config)
+
     def run_raw(
         self,
         *,
@@ -467,7 +475,7 @@ class OpenCodeRuntimeClient(BaseRuntimeClient):
         while True:
             try:
                 connected_at = time.monotonic()
-                with opener.open(request, timeout=10) as response:  # noqa: S310 - user-configured local agent server.
+                with opener.open(request) as response:  # noqa: S310 - user-configured local agent server.
                     if not started_logged:
                         self._log(f"[opencode:event] stage={stage_name} shared listener 已启动")
                         started_logged = True
@@ -476,6 +484,10 @@ class OpenCodeRuntimeClient(BaseRuntimeClient):
                             line = response.readline()
                         except (TimeoutError, socket.timeout):
                             continue
+                        except OSError as exc:
+                            if self._is_event_stream_timeout(exc):
+                                break
+                            raise
                         if not line:
                             break
                         decoded = line.decode("utf-8", errors="replace").strip()
@@ -520,6 +532,9 @@ class OpenCodeRuntimeClient(BaseRuntimeClient):
                 self._log(f"[opencode:event] stage={stage_name} shared listener 失败，将重连: {exc}")
                 threading.Event().wait(2)
 
+    def _is_event_stream_timeout(self, exc: OSError) -> bool:
+        return "timed out" in str(exc).lower()
+
     def _dispatch_shared_event(self, key: tuple[str, str], event: Any) -> None:
         with self._event_bus_lock:
             callbacks = list(self._event_bus_subscribers.get(key) or [])
@@ -542,7 +557,8 @@ class OpenCodeRuntimeClient(BaseRuntimeClient):
         if not poll_messages:
             self._log(
                 f"[opencode:poll] stage={stage_name} session={session_id} "
-                "format=json_schema 模式跳过 /session/:id/message 轮询，避免 opencode message list 校验错误"
+                "format=json_schema 模式下后台只轮询 /permission，"
+                "不读取 /session/:id/message，避免 opencode message list 校验错误"
             )
         while not stop_event.is_set():
             try:

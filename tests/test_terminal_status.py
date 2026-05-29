@@ -1,5 +1,8 @@
 import tempfile
 import unittest
+import sys
+import time
+from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, PropertyMock, patch
@@ -25,6 +28,72 @@ class TerminalStatusErrorLoggingTest(unittest.TestCase):
             self.assertIn("RuntimeError: boom", content)
             self.assertIn("Traceback (most recent call last):", content)
 
+
+class TerminalStatusWebRuntimeTest(unittest.TestCase):
+    def test_run_with_starts_web_ui_and_tees_command_line_output(self):
+        status = TerminalStatus()
+        fake_server = Mock()
+        fake_server.start.return_value = "http://127.0.0.1:8765/"
+
+        stdout = StringIO()
+        stderr = StringIO()
+
+        def target():
+            print("hello stdout")
+            print("hello stderr", file=sys.stderr)
+
+        with patch("utils.terminal_status.RuntimeStatusServer", return_value=fake_server):
+            with patch("sys.stdout", stdout), patch("sys.stderr", stderr):
+                status.run_with(target)
+
+        fake_server.start.assert_called_once_with()
+        self.assertIn("[Web UI] 实时状态页面: http://127.0.0.1:8765/", stderr.getvalue())
+        self.assertIn("hello stdout", stdout.getvalue())
+        self.assertIn("hello stderr", stderr.getvalue())
+        logs = "\n".join(item["line"] for item in status.snapshot()["logs"])
+        self.assertIn("hello stdout", logs)
+        self.assertIn("hello stderr", logs)
+
+    def test_web_runtime_enables_permission_prompt_without_textual_app(self):
+        status = TerminalStatus()
+        status.web_server = Mock()
+        request = {"id": "per_1", "permission": "write", "patterns": ["*.py"]}
+        result = {}
+
+        def ask():
+            result["reply"] = status.ask_permission(request, session_id="ses_1")
+
+        import threading
+
+        thread = threading.Thread(target=ask)
+        thread.start()
+        deadline = time.time() + 1
+        while status.permission_request is None and time.time() < deadline:
+            time.sleep(0.01)
+        self.assertIsNotNone(status.permission_request)
+        status._reply_permission_from_tui("once")
+        thread.join(timeout=1)
+
+        self.assertEqual(result["reply"], "once")
+        self.assertIsNone(status.permission_request)
+
+    def test_snapshot_contains_status_functions_and_logs(self):
+        status = TerminalStatus()
+        status.set_runtime("opencode", session_id="ses_123")
+        status.set_stage("Audit", function_name="handle_login", audit_type="command_injection")
+        status.set_functions([SimpleNamespace(func_name="handle_login", file_path="main.c")])
+        status.start_function("handle_login", "main.c")
+        status.log("line one", stream="stderr")
+
+        snapshot = status.snapshot()
+
+        self.assertEqual(snapshot["stage"], "Audit")
+        self.assertEqual(snapshot["runtime"], "opencode")
+        self.assertEqual(snapshot["session_id"], "ses_123")
+        self.assertEqual(snapshot["functions"][0]["name"], "handle_login")
+        self.assertEqual(snapshot["functions"][0]["status"], "running")
+        self.assertEqual(snapshot["logs"][0]["line"], "line one")
+        self.assertEqual(snapshot["logs"][0]["stream"], "stderr")
 
 class AuditStatusAppFocusTest(unittest.TestCase):
     def test_toggle_functions_focuses_table_when_open_and_log_when_closed(self):
