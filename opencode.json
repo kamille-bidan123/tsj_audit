@@ -1,0 +1,30 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "permission": {
+    "bash": {
+      "*": "ask",
+      "cat *": "allow",
+      "find *": "allow",
+      "go run ./cmd/scan *": "allow",
+      "grep *": "allow",
+      "ls *": "allow",
+      "pwd": "allow",
+      "python .agents/skills/*/scripts/scan.py *": "allow",
+      "python scripts/scan.py *": "allow",
+      "python scripts/scan_ioctl.py *": "allow",
+      "python skills/attack_surface/*/scripts/scan.py *": "allow",
+      "python3 .agents/skills/*/scripts/scan.py *": "allow",
+      "python3 scripts/scan.py *": "allow",
+      "python3 scripts/scan_ioctl.py *": "allow",
+      "python3 skills/attack_surface/*/scripts/scan.py *": "allow",
+      "rg *": "allow",
+      "sed -n *": "allow"
+    },
+    "edit": "deny",
+    "external_directory": {
+      "*": "ask",
+      "/Users/lometsj/Documents/llm_tool/Dice": "allow",
+      "/Users/lometsj/Documents/llm_tool/Dice/**": "allow"
+    }
+  }
+}

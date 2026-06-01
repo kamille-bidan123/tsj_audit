@@ -1,81 +1,23 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-共享数据模型
+"""Minimal Python compatibility models for legacy scan scripts.
 
-定义 scan 和 trace 共用的 Pydantic 模型
+The Go implementation is the primary application. This file exists only so
+custom or retained Python scan scripts can still construct EntrySpec objects
+and serialize them with model_dump().
 """
 
 from __future__ import annotations
 
-from typing import Optional, List
-from pydantic import BaseModel, ConfigDict
+from dataclasses import asdict, dataclass
+from typing import Optional
 
 
-class EntrySpec(BaseModel):
-    """轻量入口描述，由发现阶段或用户维护的 JSON 提供。"""
-    model_config = ConfigDict(extra="forbid")
-
+@dataclass
+class EntrySpec:
     func_name: str
     file_path: str
-    # 当前入口函数需要使用的审计知识 skill，如 "civetweb_audit"。
     skill: Optional[str] = None
-    # 可选定位提示。C++ 同名 handler 较多时建议提供。
     start_line: Optional[int] = None
 
-
-class FunctionInfo(BaseModel):
-    """补齐源码上下文后的入口函数信息"""
-    model_config = ConfigDict(extra="forbid")
-
-    func_name: str
-    file_path: str
-    start_line: int
-    end_line: int
-    code_snippet: str
-    # 当前入口函数需要使用的审计知识 skill，如 "civetweb_audit"。
-    skill: Optional[str] = None
-
-
-class CodeContext(BaseModel):
-    """代码上下文信息"""
-    function_name: str
-    file_path: str
-    line_start: int
-    line_end: int
-    code_snippet: str
-    is_entry_point: bool = False
-    taint_source: Optional[str] = None
-    taint_path: Optional[str] = None
-
-
-class TraceResult(BaseModel):
-    """追踪结果"""
-    function_info: FunctionInfo
-    code_logic: str = ""  # 代码逻辑描述
-    code_map: List[CodeContext] = []
-    audit_results: List['AuditResult'] = []  # 漏洞审计结果
-    exploit_results: List['ExploitResult'] = []  # 漏洞利用结果
-
-
-class AuditResult(BaseModel):
-    """漏洞审计结果"""
-    vulnerability_type: str  # 漏洞类型，如 "command_injection", "sql_injection"
-    finding_id: Optional[str] = None  # 同一漏洞类型下的具体发现 ID
-    title: Optional[str] = None  # 具体发现标题
-    severity: Optional[str] = None  # 严重程度：critical, high, medium, low, info
-    is_vulnerable: bool  # 是否存在漏洞
-    confidence: str  # 置信度：high, medium, low
-    description: str  # 漏洞描述
-    taint_flow: Optional[str] = None  # 污点流向
-    recommendation: Optional[str] = None  # 修复建议
-    code_map: List[CodeContext] = []  # 相关代码上下文
-
-
-class ExploitResult(BaseModel):
-    """漏洞利用结果"""
-    vulnerability_type: str  # 漏洞类型
-    success: bool  # 是否利用成功
-    poc_command: str  # PoC 命令
-    output: str  # 执行输出
-    error: Optional[str] = None  # 错误信息
+    def model_dump(self) -> dict:
+        return {key: value for key, value in asdict(self).items() if value is not None}

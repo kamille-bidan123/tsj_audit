@@ -20,6 +20,10 @@ web/frontend/dist/
 web/static/
 !web/static/index.html
 
+# Go build output
+/tsj-audit
+/manage-extensions
+
 # Database files
 web/data/*.db
 web/data/*.sqlite
@@ -40,6 +44,7 @@ logs/
 
 # Cache
 .cache/
+.gocache/
 .langgraph_api/
 temp/
 tmp/
