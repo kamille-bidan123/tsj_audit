@@ -182,9 +182,10 @@ func createRuntime(cfg config.Config) (runtime.Client, error) {
 		}), nil
 	case "codex", "claudecode":
 		return runtime.Command{
-			Name:       cfg.AgentRuntime,
-			ProjectDir: cfg.ProjectPath,
-			Timeout:    time.Duration(cfg.ExternalRuntimeTimeoutSeconds) * time.Second,
+			Name:           cfg.AgentRuntime,
+			ProjectDir:     cfg.ProjectPath,
+			Timeout:        time.Duration(cfg.ExternalRuntimeTimeoutSeconds) * time.Second,
+			RequestRetries: cfg.ExternalRuntimeRequestRetries,
 		}, nil
 	default:
 		return nil, fmt.Errorf("unsupported runtime %q", cfg.AgentRuntime)
@@ -230,6 +231,7 @@ func loadConfigWithOutput(args []string, output io.Writer) (config.Config, error
 	flags.StringVar(&cli.TargetBaseURL, "target-base-url", "", "target base URL")
 	flags.StringVar(&cli.AuditTypes, "audit-types", "", "audit types")
 	flags.IntVar(&cli.FunctionConcurrency, "function-concurrency", 0, "number of functions to audit concurrently")
+	flags.IntVar(&cli.ExternalRuntimeRequestRetries, "external-runtime-request-retries", 0, "number of command runtime JSON retries")
 
 	disableExploit := flags.Bool("disable-exploit", false, "disable exploit stage")
 	enableFallbackAudit := flags.Bool("enable-fallback-audit", false, "enable fallback audit")

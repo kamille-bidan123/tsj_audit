@@ -147,6 +147,7 @@ opencode_require_prompt_fallback_confirmation = true
 opencode_inject_project_config = true
 opencode_config_path = "opencode.json"
 external_runtime_timeout_seconds = 1800
+external_runtime_request_retries = 2
 opencode_request_retries = 2
 function_concurrency = 1
 
@@ -188,6 +189,8 @@ opencode_request_retries = 2
 ```
 
 Go 版会在每个 opencode 会话期间轮询 `/permission` 并通过状态页面暴露权限请求。`opencode_enable_event_stream = true` 时会在 OpenCode runtime 生命周期内持有一个共享 `/event` SSE listener，并把 tool 事件按 session 分发到状态页面。
+
+`external_runtime_request_retries` 控制 `codex` / `claudecode` 命令型 runtime 在返回空输出或无法提取 JSON object 时的重试次数，默认 2。
 
 `opencode_request_retries` 控制 OpenCode HTTP 请求发生超时时的重试次数，默认 2。每次重试会重新创建 OpenCode session，避免对可能仍在运行的旧 session 重复提交同一个 message。
 

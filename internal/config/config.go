@@ -22,6 +22,7 @@ type Config struct {
 	OpenCodeConfigPath                        string   `json:"opencode_config_path"`
 	OpenCodeRequestRetries                    int      `json:"opencode_request_retries"`
 	ExternalRuntimeTimeoutSeconds             int      `json:"external_runtime_timeout_seconds"`
+	ExternalRuntimeRequestRetries             int      `json:"external_runtime_request_retries"`
 	FunctionConcurrency                       int      `json:"function_concurrency"`
 	DisableExploit                            bool     `json:"disable_exploit"`
 	EnableFallbackAudit                       bool     `json:"enable_fallback_audit"`
@@ -38,26 +39,27 @@ type Config struct {
 }
 
 type Args struct {
-	ConfigFile                   string
-	AgentRuntime                 string
-	OpenCodeBaseURL              string
-	OpenCodeProviderID           string
-	OpenCodeModelID              string
-	OpenCodeEnableEventStream    *bool
-	OpenCodeStructuredOutputMode string
-	DisableExploit               *bool
-	EnableFallbackAudit          *bool
-	Debug                        *bool
-	DryRun                       *bool
-	Resume                       *bool
-	Scan                         string
-	Entry                        string
-	AttackSurfaceSkill           string
-	ProjectPath                  string
-	OutputDir                    string
-	TargetBaseURL                string
-	AuditTypes                   string
-	FunctionConcurrency          int
+	ConfigFile                    string
+	AgentRuntime                  string
+	OpenCodeBaseURL               string
+	OpenCodeProviderID            string
+	OpenCodeModelID               string
+	OpenCodeEnableEventStream     *bool
+	OpenCodeStructuredOutputMode  string
+	DisableExploit                *bool
+	EnableFallbackAudit           *bool
+	Debug                         *bool
+	DryRun                        *bool
+	Resume                        *bool
+	Scan                          string
+	Entry                         string
+	AttackSurfaceSkill            string
+	ProjectPath                   string
+	OutputDir                     string
+	TargetBaseURL                 string
+	AuditTypes                    string
+	FunctionConcurrency           int
+	ExternalRuntimeRequestRetries int
 }
 
 func Load(args Args) (Config, error) {
@@ -87,6 +89,7 @@ func defaults() Config {
 		OpenCodeConfigPath:                        "opencode.json",
 		OpenCodeRequestRetries:                    2,
 		ExternalRuntimeTimeoutSeconds:             1800,
+		ExternalRuntimeRequestRetries:             2,
 		FunctionConcurrency:                       1,
 		ProjectPath:                               ".",
 		OutputDir:                                 "output",
@@ -168,6 +171,8 @@ func applyEnv(cfg *Config, values map[string]string) {
 			cfg.OpenCodeRequestRetries = parseInt(value, cfg.OpenCodeRequestRetries)
 		case "external_runtime_timeout_seconds":
 			cfg.ExternalRuntimeTimeoutSeconds = parseInt(value, cfg.ExternalRuntimeTimeoutSeconds)
+		case "external_runtime_request_retries":
+			cfg.ExternalRuntimeRequestRetries = parseInt(value, cfg.ExternalRuntimeRequestRetries)
 		case "function_concurrency":
 			cfg.FunctionConcurrency = parseInt(value, cfg.FunctionConcurrency)
 		case "disable_exploit":
@@ -255,6 +260,9 @@ func applyArgs(cfg *Config, args Args) {
 	}
 	if args.FunctionConcurrency > 0 {
 		cfg.FunctionConcurrency = args.FunctionConcurrency
+	}
+	if args.ExternalRuntimeRequestRetries > 0 {
+		cfg.ExternalRuntimeRequestRetries = args.ExternalRuntimeRequestRetries
 	}
 }
 

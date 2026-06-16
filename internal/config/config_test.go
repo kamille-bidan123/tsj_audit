@@ -117,6 +117,30 @@ func TestFunctionConcurrencyDefaultsToOne(t *testing.T) {
 	}
 }
 
+func TestExternalRuntimeRequestRetriesFromEnvAndCLI(t *testing.T) {
+	dir := t.TempDir()
+	configFile := filepath.Join(dir, "runtime.env")
+	if err := os.WriteFile(configFile, []byte("external_runtime_request_retries = 3\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(Args{ConfigFile: configFile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ExternalRuntimeRequestRetries != 3 {
+		t.Fatalf("ExternalRuntimeRequestRetries = %d", cfg.ExternalRuntimeRequestRetries)
+	}
+
+	cfg, err = Load(Args{ConfigFile: configFile, ExternalRuntimeRequestRetries: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ExternalRuntimeRequestRetries != 5 {
+		t.Fatalf("CLI ExternalRuntimeRequestRetries = %d", cfg.ExternalRuntimeRequestRetries)
+	}
+}
+
 func TestBooleanEnvAndCLIOverrides(t *testing.T) {
 	dir := t.TempDir()
 	configFile := filepath.Join(dir, "opencode.env")

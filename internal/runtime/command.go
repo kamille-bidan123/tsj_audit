@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -13,12 +14,36 @@ import (
 )
 
 type Command struct {
-	Name       string
-	ProjectDir string
-	Timeout    time.Duration
+	Name           string
+	ProjectDir     string
+	Timeout        time.Duration
+	RequestRetries int
 }
 
 func (c Command) RunJSON(ctx context.Context, req RunJSONRequest) (json.RawMessage, []Message, error) {
+	attempts := c.RequestRetries + 1
+	if attempts < 1 {
+		attempts = 1
+	}
+	for attempt := 1; attempt <= attempts; attempt++ {
+		raw, messages, err := c.runJSONAttempt(ctx, req, attempt, attempts)
+		if err == nil {
+			return raw, messages, nil
+		}
+		if !isRetryableCommandRuntimeError(err) || attempt == attempts {
+			return nil, nil, err
+		}
+		if req.Status != nil {
+			req.Status.LogForFunction(req.EntryKey, fmt.Sprintf("[%s] %s returned malformed JSON on attempt %d/%d; retrying: %v", c.Name, req.StageName, attempt, attempts, err))
+		}
+		if err := sleepBeforeCommandRetry(ctx, attempt); err != nil {
+			return nil, nil, err
+		}
+	}
+	return nil, nil, fmt.Errorf("%s retry loop exhausted", c.Name)
+}
+
+func (c Command) runJSONAttempt(ctx context.Context, req RunJSONRequest, attempt, attempts int) (json.RawMessage, []Message, error) {
 	if req.Status != nil {
 		req.Status.SetRuntimeForTask(req.EntryKey, c.Name, "-")
 	}
@@ -33,7 +58,7 @@ func (c Command) RunJSON(ctx context.Context, req RunJSONRequest) (json.RawMessa
 		timeout = 30 * time.Minute
 	}
 	if req.Status != nil {
-		req.Status.StartAgentTimerForFunction(req.EntryKey, req.StageName, timeout, 1, 1)
+		req.Status.StartAgentTimerForFunction(req.EntryKey, req.StageName, timeout, attempt, attempts)
 		defer req.Status.StopAgentTimerForFunction(req.EntryKey)
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -74,7 +99,7 @@ func (c Command) RunJSON(ctx context.Context, req RunJSONRequest) (json.RawMessa
 		}
 	}
 	if len(raw) == 0 {
-		return nil, nil, fmt.Errorf("%s runtime returned empty output", c.Name)
+		return nil, nil, fmt.Errorf("%s runtime returned empty output: %w", c.Name, errCommandEmptyOutput)
 	}
 	if req.Status != nil {
 		req.Status.LogForFunction(req.EntryKey, fmt.Sprintf("[%s] completed command stage=%s duration=%s stdout_bytes=%d stderr_bytes=%d", c.Name, req.StageName, time.Since(started).Round(time.Millisecond), len(stdout.Bytes()), len(stderr.Bytes())))
@@ -95,28 +120,46 @@ func (c Command) build(req RunJSONRequest) ([]string, string, string, func(), er
 		}
 		return BuildCodexCommand(req.StageName, schemaPath, outputPath), req.UserPrompt, outputPath, cleanup, nil
 	case "claudecode":
-		return BuildClaudeCodeCommand(req.UserPrompt), "", "", func() {}, nil
+		schemaPath, cleanup, err := writeCommandSchemaTempFile(req.Schema, "tsj-audit-claude-*")
+		if err != nil {
+			return nil, "", "", func() {}, err
+		}
+		schemaData, err := os.ReadFile(schemaPath)
+		if err != nil {
+			cleanup()
+			return nil, "", "", func() {}, err
+		}
+		return BuildClaudeCodeCommand(req.UserPrompt, string(schemaData)), "", "", cleanup, nil
 	default:
 		return nil, "", "", func() {}, fmt.Errorf("unsupported command runtime: %s", c.Name)
 	}
 }
 
 func writeCodexTempFiles(schema json.RawMessage) (string, string, func(), error) {
-	dir, err := os.MkdirTemp("", "tsj-audit-codex-*")
+	schemaPath, cleanup, err := writeCommandSchemaTempFile(schema, "tsj-audit-codex-*")
 	if err != nil {
 		return "", "", func() {}, err
 	}
+	dir := filepath.Dir(schemaPath)
+	outputPath := filepath.Join(dir, "output.json")
+	return schemaPath, outputPath, cleanup, nil
+}
+
+func writeCommandSchemaTempFile(schema json.RawMessage, pattern string) (string, func(), error) {
+	dir, err := os.MkdirTemp("", pattern)
+	if err != nil {
+		return "", func() {}, err
+	}
 	cleanup := func() { _ = os.RemoveAll(dir) }
 	schemaPath := filepath.Join(dir, "schema.json")
-	outputPath := filepath.Join(dir, "output.json")
 	if len(schema) == 0 {
 		schema = json.RawMessage(`{"type":"object"}`)
 	}
 	if err := os.WriteFile(schemaPath, schema, 0644); err != nil {
 		cleanup()
-		return "", "", func() {}, err
+		return "", func() {}, err
 	}
-	return schemaPath, outputPath, cleanup, nil
+	return schemaPath, cleanup, nil
 }
 
 func BuildCodexCommand(stageName, schemaPath, outputPath string) []string {
@@ -136,8 +179,11 @@ func BuildCodexCommand(stageName, schemaPath, outputPath string) []string {
 	}
 }
 
-func BuildClaudeCodeCommand(prompt string) []string {
-	return []string{"claude", "-p", "--output-format", "json", "--permission-mode", "plan", prompt}
+func BuildClaudeCodeCommand(prompt string, schema string) []string {
+	if strings.TrimSpace(schema) == "" {
+		schema = `{"type":"object"}`
+	}
+	return []string{"claude", "-p", "--output-format", "json", "--json-schema", schema, "--permission-mode", "plan", prompt}
 }
 
 func commandErrorDetail(stdout []byte, stderr []byte) string {
@@ -176,6 +222,11 @@ func truncateCommandLog(value string, limit int) string {
 	return value[:limit] + "...[truncated]"
 }
 
+var (
+	errCommandEmptyOutput     = errors.New("command runtime returned empty output")
+	errClaudeCodeNoJSONObject = errors.New("claudecode result did not contain a JSON object")
+)
+
 func unwrapClaudeCodeOutput(raw []byte) (json.RawMessage, error) {
 	if len(bytes.TrimSpace(raw)) == 0 {
 		return nil, nil
@@ -192,9 +243,25 @@ func unwrapClaudeCodeOutput(raw []byte) (json.RawMessage, error) {
 	}
 	extracted, ok := extractJSONObject(wrapper.Result)
 	if !ok {
-		return nil, fmt.Errorf("claudecode result did not contain a JSON object: %s", wrapper.Result)
+		return nil, fmt.Errorf("%w: %s", errClaudeCodeNoJSONObject, wrapper.Result)
 	}
 	return extracted, nil
+}
+
+func isRetryableCommandRuntimeError(err error) bool {
+	return errors.Is(err, errCommandEmptyOutput) || errors.Is(err, errClaudeCodeNoJSONObject)
+}
+
+func sleepBeforeCommandRetry(ctx context.Context, attempt int) error {
+	delay := time.Duration(attempt) * 250 * time.Millisecond
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func extractJSONObject(value string) (json.RawMessage, bool) {

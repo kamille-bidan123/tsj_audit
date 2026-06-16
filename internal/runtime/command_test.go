@@ -34,9 +34,10 @@ func TestBuildCodexCommandUsesWorkspaceWriteForExploit(t *testing.T) {
 }
 
 func TestBuildClaudeCodeCommand(t *testing.T) {
-	command := BuildClaudeCodeCommand("hello")
+	schema := `{"type":"object","properties":{"ok":{"type":"boolean"}}}`
+	command := BuildClaudeCodeCommand("hello", schema)
 
-	want := []string{"claude", "-p", "--output-format", "json", "--permission-mode", "plan", "hello"}
+	want := []string{"claude", "-p", "--output-format", "json", "--json-schema", schema, "--permission-mode", "plan", "hello"}
 	if !equalStrings(command, want) {
 		t.Fatalf("command = %#v, want %#v", command, want)
 	}
@@ -124,6 +125,100 @@ func TestCommandRuntimeLogsClaudeCodeStartAndCompletion(t *testing.T) {
 	}
 }
 
+func TestCommandRuntimeRetriesClaudeCodeMissingJSONObject(t *testing.T) {
+	dir := t.TempDir()
+	claudePath := filepath.Join(dir, "claude")
+	countPath := filepath.Join(dir, "count")
+	script := `#!/bin/sh
+count_file="` + countPath + `"
+count=0
+if [ -f "$count_file" ]; then
+  count="$(cat "$count_file")"
+fi
+count=$((count + 1))
+printf '%s' "$count" > "$count_file"
+if [ "$count" -eq 1 ]; then
+  printf '%s\n' '{"type":"result","is_error":false,"result":"I cannot provide that as JSON yet."}'
+  exit 0
+fi
+printf '%s\n' '{"type":"result","is_error":false,"result":"{\"ok\":true}"}'
+`
+	if err := os.WriteFile(claudePath, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	oldPath := os.Getenv("PATH")
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+oldPath)
+
+	raw, _, err := Command{Name: "claudecode", RequestRetries: 1}.RunJSON(context.Background(), RunJSONRequest{
+		StageName:  "Trace",
+		UserPrompt: "return json",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != `{"ok":true}` {
+		t.Fatalf("raw = %s", raw)
+	}
+	countData, err := os.ReadFile(countPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(countData) != "2" {
+		t.Fatalf("claude calls = %s", countData)
+	}
+}
+
+func TestCommandRuntimePassesJSONSchemaToClaudeCode(t *testing.T) {
+	dir := t.TempDir()
+	claudePath := filepath.Join(dir, "claude")
+	argsPath := filepath.Join(dir, "args.json")
+	script := `#!/bin/sh
+python3 - "$@" <<'PY'
+import json
+import sys
+from pathlib import Path
+Path("` + argsPath + `").write_text(json.dumps(sys.argv[1:]))
+PY
+printf '%s\n' '{"type":"result","is_error":false,"result":"{\"ok\":true}"}'
+`
+	if err := os.WriteFile(claudePath, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	oldPath := os.Getenv("PATH")
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+oldPath)
+
+	schema := json.RawMessage(`{"type":"object","properties":{"ok":{"type":"boolean"}},"required":["ok"]}`)
+	raw, _, err := Command{Name: "claudecode"}.RunJSON(context.Background(), RunJSONRequest{
+		StageName:  "Trace",
+		UserPrompt: "return json",
+		Schema:     schema,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != `{"ok":true}` {
+		t.Fatalf("raw = %s", raw)
+	}
+	argsData, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var args []string
+	if err := json.Unmarshal(argsData, &args); err != nil {
+		t.Fatal(err)
+	}
+	index := indexOf(args, "--json-schema")
+	if index < 0 || index+1 >= len(args) {
+		t.Fatalf("args missing --json-schema: %#v", args)
+	}
+	if !json.Valid([]byte(args[index+1])) {
+		t.Fatalf("schema argument is not valid JSON: %q", args[index+1])
+	}
+	if args[index+1] != string(schema) {
+		t.Fatalf("schema argument = %s, want %s", args[index+1], schema)
+	}
+}
+
 func containsPair(values []string, key string, value string) bool {
 	for i := 0; i+1 < len(values); i++ {
 		if values[i] == key && values[i+1] == value {
@@ -131,6 +226,15 @@ func containsPair(values []string, key string, value string) bool {
 		}
 	}
 	return false
+}
+
+func indexOf(values []string, needle string) int {
+	for index, value := range values {
+		if value == needle {
+			return index
+		}
+	}
+	return -1
 }
 
 func containsAll(value string, needles ...string) bool {
