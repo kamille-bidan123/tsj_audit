@@ -105,11 +105,16 @@ archives:
         dst: skills
       - src: skills/**/*.py
         dst: skills
+      - src: audit_specs/*.yaml
+        dst: audit_specs
       - src: audit_specs/**/*.yaml
         dst: audit_specs
 
 checksum:
   name_template: "checksums.txt"
+
+release:
+  replace_existing_artifacts: true
 
 snapshot:
   version_template: "{{ incpatch .Version }}-next"
