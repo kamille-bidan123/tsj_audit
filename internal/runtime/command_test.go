@@ -67,6 +67,42 @@ func TestUnwrapClaudeCodeError(t *testing.T) {
 	}
 }
 
+func TestUnwrapClaudeCodeErrorWithoutResult(t *testing.T) {
+	raw := []byte(`{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=null"]}`)
+
+	_, err := unwrapClaudeCodeOutput(raw)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !containsAll(err.Error(), "claudecode", "ede_diagnostic") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestUnwrapClaudeCodeStructuredResultObject(t *testing.T) {
+	raw := []byte(`{"type":"result","is_error":false,"result":{"ok":true}}`)
+
+	unwrapped, err := unwrapClaudeCodeOutput(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(unwrapped) != `{"ok":true}` {
+		t.Fatalf("unwrapped = %s", unwrapped)
+	}
+}
+
+func TestUnwrapClaudeCodeStructuredOutput(t *testing.T) {
+	raw := []byte(`{"type":"result","subtype":"success","is_error":false,"result":"Done.","structured_output":{"ok":true,"message":"hello"}}`)
+
+	unwrapped, err := unwrapClaudeCodeOutput(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(unwrapped) != `{"ok":true,"message":"hello"}` {
+		t.Fatalf("unwrapped = %s", unwrapped)
+	}
+}
+
 func TestCommandErrorDetailIncludesStdout(t *testing.T) {
 	detail := commandErrorDetail([]byte("stdout failure"), nil)
 	if !containsAll(detail, "stdout", "stdout failure") {

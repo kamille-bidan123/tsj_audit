@@ -231,21 +231,59 @@ func unwrapClaudeCodeOutput(raw []byte) (json.RawMessage, error) {
 	if len(bytes.TrimSpace(raw)) == 0 {
 		return nil, nil
 	}
-	var wrapper struct {
-		IsError bool   `json:"is_error"`
-		Result  string `json:"result"`
+	var wrapper claudeCodeWrapper
+	if err := json.Unmarshal(raw, &wrapper); err != nil {
+		return json.RawMessage(raw), nil
 	}
-	if err := json.Unmarshal(raw, &wrapper); err != nil || wrapper.Result == "" {
+	if wrapper.Type == "" && len(wrapper.Result) == 0 {
 		return json.RawMessage(raw), nil
 	}
 	if wrapper.IsError {
-		return nil, fmt.Errorf("claudecode runtime returned error: %s", wrapper.Result)
+		return nil, fmt.Errorf("claudecode runtime returned error: %s", claudeCodeErrorMessage(wrapper, raw))
 	}
-	extracted, ok := extractJSONObject(wrapper.Result)
+	if len(bytes.TrimSpace(wrapper.StructuredOutput)) > 0 {
+		if json.Valid(wrapper.StructuredOutput) && bytes.HasPrefix(bytes.TrimSpace(wrapper.StructuredOutput), []byte("{")) {
+			return json.RawMessage(bytes.TrimSpace(wrapper.StructuredOutput)), nil
+		}
+		return nil, fmt.Errorf("%w: invalid structured_output %s", errClaudeCodeNoJSONObject, string(bytes.TrimSpace(wrapper.StructuredOutput)))
+	}
+	if len(bytes.TrimSpace(wrapper.Result)) == 0 {
+		return nil, fmt.Errorf("%w: missing result in %s", errClaudeCodeNoJSONObject, string(bytes.TrimSpace(raw)))
+	}
+	if json.Valid(wrapper.Result) && bytes.HasPrefix(bytes.TrimSpace(wrapper.Result), []byte("{")) {
+		return json.RawMessage(bytes.TrimSpace(wrapper.Result)), nil
+	}
+	var resultText string
+	if err := json.Unmarshal(wrapper.Result, &resultText); err != nil {
+		return nil, fmt.Errorf("%w: %s", errClaudeCodeNoJSONObject, string(bytes.TrimSpace(wrapper.Result)))
+	}
+	extracted, ok := extractJSONObject(resultText)
 	if !ok {
-		return nil, fmt.Errorf("%w: %s", errClaudeCodeNoJSONObject, wrapper.Result)
+		return nil, fmt.Errorf("%w: %s", errClaudeCodeNoJSONObject, resultText)
 	}
 	return extracted, nil
+}
+
+type claudeCodeWrapper struct {
+	Type             string          `json:"type"`
+	IsError          bool            `json:"is_error"`
+	Result           json.RawMessage `json:"result"`
+	StructuredOutput json.RawMessage `json:"structured_output"`
+	Errors           []string        `json:"errors"`
+}
+
+func claudeCodeErrorMessage(wrapper claudeCodeWrapper, raw []byte) string {
+	if len(bytes.TrimSpace(wrapper.Result)) > 0 {
+		var resultText string
+		if err := json.Unmarshal(wrapper.Result, &resultText); err == nil && strings.TrimSpace(resultText) != "" {
+			return resultText
+		}
+		return string(bytes.TrimSpace(wrapper.Result))
+	}
+	if len(wrapper.Errors) > 0 {
+		return strings.Join(wrapper.Errors, "; ")
+	}
+	return string(bytes.TrimSpace(raw))
 }
 
 func isRetryableCommandRuntimeError(err error) bool {
