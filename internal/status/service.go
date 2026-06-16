@@ -45,9 +45,17 @@ func listenAvailable(host string, startPort int, attempts int) (net.Listener, in
 	for port := startPort; port < startPort+attempts; port++ {
 		listener, err := net.Listen("tcp", fmt.Sprintf("%s:%d", host, port))
 		if err == nil {
-			return listener, port, nil
+			return listener, listenerPort(listener, port), nil
 		}
 		lastErr = err
 	}
 	return nil, 0, fmt.Errorf("no available status port starting at %d: %w", startPort, lastErr)
+}
+
+func listenerPort(listener net.Listener, fallback int) int {
+	tcpAddr, ok := listener.Addr().(*net.TCPAddr)
+	if !ok || tcpAddr.Port == 0 {
+		return fallback
+	}
+	return tcpAddr.Port
 }
