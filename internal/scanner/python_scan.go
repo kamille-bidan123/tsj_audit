@@ -22,13 +22,20 @@ import contextlib
 scan_path = sys.argv[1]
 project_path = sys.argv[2]
 
+def encode_result(value):
+    if hasattr(value, "model_dump"):
+        return value.model_dump()
+    if hasattr(value, "__dict__"):
+        return value.__dict__
+    raise TypeError(f"Object of type {value.__class__.__name__} is not JSON serializable")
+
 try:
     with contextlib.redirect_stdout(sys.stderr):
         spec = importlib.util.spec_from_file_location("scan_module", scan_path)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         results = module.scan_directory(project_path)
-    print(json.dumps(results, ensure_ascii=False))
+    print(json.dumps(results, ensure_ascii=False, default=encode_result))
 except Exception:
     traceback.print_exc()
     sys.exit(1)

@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Test
+        run: go test ./...
+
+      - name: Build commands
+        run: |
+          mkdir -p /tmp/tsj-audit-build
+          go build -o /tmp/tsj-audit-build/tsj-audit ./cmd/tsj-audit
+          go build -o /tmp/tsj-audit-build/export-results ./cmd/export-results
+          go build -o /tmp/tsj-audit-build/manage-extensions ./cmd/manage-extensions
+          go build -o /tmp/tsj-audit-build/scan ./cmd/scan
+          go build -o /tmp/tsj-audit-build/civetweb_audit ./cmd/civetweb_audit
+          go build -o /tmp/tsj-audit-build/ioctl_audit ./cmd/ioctl_audit
+          go build -o /tmp/tsj-audit-build/verify-go-refactor ./cmd/verify-go-refactor

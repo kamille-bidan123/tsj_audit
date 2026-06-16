@@ -1,9 +1,12 @@
 package scanner
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -46,24 +49,54 @@ func RunAttackSurfaceScan(skillName string, projectPath string) ([]models.EntryS
 }
 
 func RunScan(ctx context.Context, scanPath string, projectPath string) ([]models.EntrySpec, error) {
-	if skillName, ok := nativeSkillForScanPath(scanPath); ok {
-		entries, _, err := RunAttackSurfaceScan(skillName, projectPath)
-		return entries, err
+	absProjectPath, err := filepath.Abs(projectPath)
+	if err != nil {
+		return nil, err
 	}
-	return RunPythonScan(ctx, scanPath, projectPath)
+	if executable, err := isExecutableFile(scanPath); err != nil {
+		return nil, err
+	} else if executable {
+		return RunBinaryScan(ctx, scanPath, absProjectPath)
+	}
+	if strings.EqualFold(filepath.Ext(scanPath), ".py") {
+		return RunPythonScan(ctx, scanPath, absProjectPath)
+	}
+	return nil, fmt.Errorf("scan path is not executable or a Python script: %s", scanPath)
 }
 
-func nativeSkillForScanPath(scanPath string) (string, bool) {
-	clean := filepath.ToSlash(filepath.Clean(scanPath))
-	base := filepath.Base(clean)
-	switch {
-	case strings.Contains(clean, "ioctl_audit/scripts/scan.py"), base == "scan_ioctl.py":
-		return "ioctl_audit", true
-	case strings.Contains(clean, "civetweb_audit/scripts/scan.py"), base == "scan.py":
-		return "civetweb_audit", true
-	default:
-		return "", false
+func RunBinaryScan(ctx context.Context, scanPath string, projectPath string) ([]models.EntrySpec, error) {
+	commandPath := binaryScanCommandPath(scanPath)
+	command := exec.CommandContext(ctx, commandPath, projectPath)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	command.Stdout = &stdout
+	command.Stderr = &stderr
+	if err := command.Run(); err != nil {
+		return nil, fmt.Errorf("binary scan failed: %w: %s", err, stderr.String())
 	}
+	var entries []models.EntrySpec
+	if err := json.Unmarshal(stdout.Bytes(), &entries); err != nil {
+		return nil, fmt.Errorf("decode binary scan output: %w", err)
+	}
+	return entries, nil
+}
+
+func binaryScanCommandPath(scanPath string) string {
+	if filepath.IsAbs(scanPath) || strings.ContainsRune(scanPath, os.PathSeparator) {
+		return scanPath
+	}
+	return "." + string(os.PathSeparator) + scanPath
+}
+
+func isExecutableFile(path string) (bool, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return false, err
+	}
+	if info.IsDir() {
+		return false, nil
+	}
+	return info.Mode()&0111 != 0, nil
 }
 
 func scanCivetWeb(projectPath string) ([]models.EntrySpec, error) {

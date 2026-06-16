@@ -31,7 +31,7 @@ GOCACHE="$PWD/.gocache" go run ./cmd/verify-go-refactor
 
 当前推荐的使用方式是通过 Go CLI 的 `--attack-surface-skill` 指定一个攻击面 skill，让工具自动发现入口函数并完成后续审计。也可以使用 `--scan` 指定扫描脚本，或使用 `--entry` 指定 EntrySpec JSON 作为入口。
 
-内置 `civetweb_audit` 和 `ioctl_audit` 已有 Go 原生扫描器。`--attack-surface-skill civetweb_audit`、`--attack-surface-skill ioctl_audit`、`--scan scripts/scan.py` 和 `--scan scripts/scan_ioctl.py` 都会走 Go 原生扫描；其他自定义 skill 仍可通过自带 `scripts/scan.py` 兼容路径或 runtime-backed discovery 发现入口。
+内置 `civetweb_audit` 和 `ioctl_audit` 可编译为独立扫描二进制。主审计流程中，`--scan` 如果指向可执行文件，会直接以 `<scan_binary> <absolute_project_path>` 形式运行；如果指向非可执行 `.py` 文件，则走 Python 扫描脚本兼容路径。`--attack-surface-skill` 会直接交给 runtime 根据 skill 内容发现入口函数。
 
 ## 审计流程
 
@@ -61,7 +61,7 @@ GOCACHE="$PWD/.gocache" go run ./cmd/verify-go-refactor
 
 ## 快速开始
 
-使用攻击面 skill 自动发现入口并审计：
+使用攻击面 skill 让 runtime 自动发现入口并审计：
 
 ```bash
 go run ./cmd/tsj-audit \
@@ -70,12 +70,18 @@ go run ./cmd/tsj-audit \
   --output-dir output
 ```
 
-使用扫描脚本作为入口：
+使用扫描脚本或扫描二进制作为入口：
 
 ```bash
 go run ./cmd/tsj-audit \
   --project-path /path/to/project \
   --scan scripts/scan.py \
+  --output-dir output
+
+go build -o civetweb_audit ./cmd/civetweb_audit
+go run ./cmd/tsj-audit \
+  --project-path /path/to/project \
+  --scan ./civetweb_audit \
   --output-dir output
 ```
 
@@ -84,6 +90,8 @@ go run ./cmd/tsj-audit \
 ```bash
 go run ./cmd/scan --project-path /path/to/project --skill civetweb_audit
 go run ./cmd/scan --project-path /path/to/project --skill ioctl_audit
+go run ./cmd/civetweb_audit /path/to/project
+go run ./cmd/ioctl_audit /path/to/project
 ```
 
 使用 EntrySpec JSON 作为入口：
@@ -257,7 +265,7 @@ required_audit_types:
 
 1. 攻击面发现知识
    - 可以是文字描述，例如接口注册逻辑、框架路由规则、回调绑定方式。
-   - 也可以附带扫描脚本作为子文件，例如 `skills/attack_surface/civetweb_audit/scripts/scan.py`。
+   - 主审计流程不会自动执行 skill 目录下的扫描脚本；如需脚本入口，请通过 `--scan` 显式指定。
 
 2. 外部输入知识
    - 描述外部输入从哪些 API、参数、请求体、Header、WebSocket 消息或 RPC 字段进入代码。
@@ -420,7 +428,6 @@ skills/
   attack_surface/
     civetweb_audit/
       SKILL.md
-      scripts/scan.py
   rpc_communication/
     SKILL.md
 ```

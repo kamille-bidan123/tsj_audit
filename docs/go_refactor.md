@@ -6,13 +6,13 @@ This branch contains the Go-first TSJ Audit refactor.
 
 - Go CLI entry point: `cmd/tsj-audit`
 - Go native scan command: `cmd/scan`
+- Standalone native scan binaries: `cmd/civetweb_audit` and `cmd/ioctl_audit`
 - Config loading from defaults, `.env`, explicit `--config`, and CLI overrides
 - Core JSON models compatible with the Python artifacts
 - Entry loading from `--entry`
-- `--scan` support with native Go handling for built-in `scripts/scan.py` and `scripts/scan_ioctl.py`, plus Python compatibility fallback for custom scripts
+- `--scan` support for executable scan binaries called as `<binary> <absolute_project_path>`, plus explicitly provided Python scan scripts
 - Native Go attack-surface scanning for built-in `civetweb_audit` and `ioctl_audit`
-- Attack surface skill discovery through native Go scanners, custom `skills/attack_surface/<name>/scripts/scan.py` compatibility, or runtime-backed discovery
-- Runtime-backed attack surface entry discovery fallback when a skill does not provide `scripts/scan.py`
+- Attack surface skill discovery through runtime-backed Entry Discovery
 - Skill frontmatter parsing for `required_audit_types`
 - Audit spec loading from `audit_specs/*.yaml`
 - Runtime interface with:
@@ -97,7 +97,7 @@ GOCACHE="$PWD/.gocache" go run ./cmd/verify-go-refactor
 
 ## Verification Boundaries
 
-- Local verification covers Go tests, mock end-to-end audit execution, native Go attack-surface scanning, report artifact generation, SARIF generation, and runtime construction dry-runs for `codex`, `claudecode`, and `opencode`.
+- Local verification covers Go tests, mock end-to-end audit execution, explicit scan-script execution, native Go attack-surface scanning through `cmd/scan`, report artifact generation, SARIF generation, and runtime construction dry-runs for `codex`, `claudecode`, and `opencode`.
 - `cmd/verify-go-refactor` verifies that `codex`, `claude`, and `opencode` CLIs are present. Dry-run verification does not call external models.
 - Live model smoke status is recorded in `docs/live_runtime_smoke.md`. `codex` live smoke passed; `claudecode` is blocked by Claude API connection refusal; `opencode` reaches the local serve instance and permission flow, but the configured model did not return a final Trace JSON response during smoke testing.
 - The primary CLI, pipeline, runtime clients, status service, extension manager, standalone scanner/exporter, and verifier are Go. Python is retained only for optional custom scan-script compatibility.

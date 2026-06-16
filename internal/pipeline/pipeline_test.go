@@ -926,14 +926,34 @@ func TestRunAddsFallbackAuditWhenEnabled(t *testing.T) {
 	}
 }
 
-func TestRunAttackSurfaceSkillUsesBundledScanScriptAndSavesDiscoveredEntries(t *testing.T) {
+func TestRunAttackSurfaceSkillAlwaysUsesRuntimeDiscovery(t *testing.T) {
 	dir := t.TempDir()
 	projectDir := filepath.Join(dir, "project")
 	if err := os.MkdirAll(projectDir, 0755); err != nil {
 		t.Fatal(err)
 	}
 	outputDir := filepath.Join(dir, "output")
-	client := runtime.NewEchoTraceMock()
+	client := runtime.NewMock(map[string]json.RawMessage{
+		"EntryDiscovery": json.RawMessage(`{"functions":[{"func_name":"runtime_civet_entry","file_path":"src/runtime.c","skill":"civetweb_audit","start_line":4}]}`),
+		"Trace": json.RawMessage(`{
+			"function_info":{
+				"func_name":"runtime_civet_entry",
+				"file_path":"src/runtime.c",
+				"start_line":4,
+				"end_line":8,
+				"code_snippet":"void runtime_civet_entry() {}",
+				"skill":"civetweb_audit"
+			},
+			"code_logic":"runtime discovery",
+			"code_map":[],
+			"exploit_results":[]
+		}`),
+		"Audit:command_injection": json.RawMessage(`{"is_vulnerable":false,"confidence":"low","description":"none","summary":"none","findings":[]}`),
+		"Audit:path_traversal":    json.RawMessage(`{"is_vulnerable":false,"confidence":"low","description":"none","summary":"none","findings":[]}`),
+		"Audit:brute_force":       json.RawMessage(`{"is_vulnerable":false,"confidence":"low","description":"none","summary":"none","findings":[]}`),
+		"Audit:password_reset":    json.RawMessage(`{"is_vulnerable":false,"confidence":"low","description":"none","summary":"none","findings":[]}`),
+		"Audit:loop":              json.RawMessage(`{"is_vulnerable":false,"confidence":"low","description":"none","summary":"none","findings":[]}`),
+	})
 
 	err := Run(context.Background(), Options{
 		Config: config.Config{
@@ -950,6 +970,9 @@ func TestRunAttackSurfaceSkillUsesBundledScanScriptAndSavesDiscoveredEntries(t *
 	if err != nil {
 		t.Fatal(err)
 	}
+	if client.Calls("EntryDiscovery") != 1 {
+		t.Fatalf("EntryDiscovery calls = %d, want 1", client.Calls("EntryDiscovery"))
+	}
 
 	discoveredPath := filepath.Join(outputDir, "discovered_functions.json")
 	if _, err := os.Stat(discoveredPath); err != nil {
@@ -957,14 +980,20 @@ func TestRunAttackSurfaceSkillUsesBundledScanScriptAndSavesDiscoveredEntries(t *
 	}
 }
 
-func TestRunAttackSurfaceSkillFallsBackToRuntimeDiscovery(t *testing.T) {
+func TestRunAttackSurfaceSkillIgnoresCustomScanScript(t *testing.T) {
 	dir := t.TempDir()
 	projectDir := filepath.Join(dir, "project")
 	skillDir := filepath.Join(projectDir, "skills", "attack_surface", "custom_surface")
-	if err := os.MkdirAll(skillDir, 0755); err != nil {
+	if err := os.MkdirAll(filepath.Join(skillDir, "scripts"), 0755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: custom_surface\n---\n# Custom\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "scripts", "scan.py"), []byte(`
+def scan_directory(project_path):
+    return [{"func_name":"script_entry","file_path":"src/script.c","skill":"custom_surface","start_line":2}]
+`), 0644); err != nil {
 		t.Fatal(err)
 	}
 

@@ -74,6 +74,14 @@ func run() error {
 		return err
 	}
 	_ = os.Remove(filepath.Join(root, "tsj-audit"))
+	civetBinary := filepath.Join(work, "civetweb_audit")
+	ioctlBinary := filepath.Join(work, "ioctl_audit")
+	if err := runCommand(root, "go", "build", "-o", civetBinary, "./cmd/civetweb_audit"); err != nil {
+		return err
+	}
+	if err := runCommand(root, "go", "build", "-o", ioctlBinary, "./cmd/ioctl_audit"); err != nil {
+		return err
+	}
 
 	if err := runCommand(root,
 		"go", "run", "./cmd/tsj-audit",
@@ -108,7 +116,7 @@ func run() error {
 		"--config", configPath,
 		"--agent-runtime", "mock",
 		"--project-path", nativeProject,
-		"--scan", "scripts/scan.py",
+		"--scan", civetBinary,
 		"--audit-types", "path_traversal",
 		"--disable-exploit",
 		"--output-dir", scanOutputDir,
@@ -178,9 +186,9 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	for _, text := range []string{"native_handler", "civetweb_audit"} {
+	for _, text := range []string{"mock_discovered_entry", "civetweb_audit"} {
 		if !strings.Contains(string(discovered), text) {
-			return fmt.Errorf("native discovered_functions.json missing %q", text)
+			return fmt.Errorf("runtime discovered_functions.json missing %q", text)
 		}
 	}
 	scanReport, err := os.ReadFile(filepath.Join(scanOutputDir, "audit_report.md"))

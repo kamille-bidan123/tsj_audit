@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -80,41 +81,92 @@ func TestRunAttackSurfaceScanUnknownSkill(t *testing.T) {
 	}
 }
 
-func TestRunScanUsesNativeScannerForBuiltInScanScript(t *testing.T) {
-	project := t.TempDir()
-	writeTestFile(t, project, "src/http.c", `#include "civetweb.h"
-static int scan_handler(struct mg_connection *conn, void *data) {
-	return 1;
-}
-void register_routes(struct mg_context *ctx) {
-	mg_set_request_handler(ctx, "/scan", scan_handler, 0);
-}
+func TestRunScanExecutesProvidedScanScriptEvenForBuiltInName(t *testing.T) {
+	dir := t.TempDir()
+	scanPath := filepath.Join(dir, "scripts", "scan.py")
+	writeTestFile(t, dir, "scripts/scan.py", `
+def scan_directory(project_path):
+    return [{
+        "func_name": "script_selected_entry",
+        "file_path": "src/from_script.c",
+        "skill": "script_skill",
+        "start_line": 9,
+    }]
 `)
 
-	entries, err := RunScan(context.Background(), "scripts/scan.py", project)
+	entries, err := RunScan(context.Background(), scanPath, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 1 || entries[0].FuncName != "scan_handler" {
+	if len(entries) != 1 || entries[0].FuncName != "script_selected_entry" {
 		t.Fatalf("entries = %#v", entries)
 	}
-	if entries[0].Skill == nil || *entries[0].Skill != "civetweb_audit" {
+	if entries[0].Skill == nil || *entries[0].Skill != "script_skill" {
 		t.Fatalf("skill = %#v", entries[0].Skill)
 	}
 }
 
-func TestNativeSkillForScanPath(t *testing.T) {
-	cases := map[string]string{
-		"scripts/scan.py":       "civetweb_audit",
-		"scripts/scan_ioctl.py": "ioctl_audit",
-		"skills/attack_surface/ioctl_audit/scripts/scan.py":    "ioctl_audit",
-		"skills/attack_surface/civetweb_audit/scripts/scan.py": "civetweb_audit",
+func TestRunScanExecutesBinaryWithAbsoluteProjectPath(t *testing.T) {
+	dir := t.TempDir()
+	project := filepath.Join(dir, "project")
+	if err := os.MkdirAll(project, 0755); err != nil {
+		t.Fatal(err)
 	}
-	for path, want := range cases {
-		got, ok := nativeSkillForScanPath(path)
-		if !ok || got != want {
-			t.Fatalf("nativeSkillForScanPath(%q) = %q, %t; want %q, true", path, got, ok, want)
+	writeTestFile(t, dir, "scan-bin", `#!/bin/sh
+case "$1" in
+  /*) ;;
+  *) echo "project path is not absolute: $1" >&2; exit 7 ;;
+esac
+printf '[{"func_name":"binary_entry","file_path":"%s/src/main.c","start_line":5}]' "$1"
+`)
+	if err := os.Chmod(filepath.Join(dir, "scan-bin"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.Chdir(cwd); err != nil {
+			t.Fatal(err)
 		}
+	}()
+
+	entries, err := RunScan(context.Background(), "scan-bin", "project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].FuncName != "binary_entry" {
+		t.Fatalf("entries = %#v", entries)
+	}
+	if !filepath.IsAbs(entries[0].FilePath) || !strings.HasSuffix(entries[0].FilePath, filepath.Join("project", "src/main.c")) {
+		t.Fatalf("file_path = %q, want absolute project path ending in project/src/main.c", entries[0].FilePath)
+	}
+}
+
+func TestRunScanExecutesExecutablePythonFileDirectly(t *testing.T) {
+	dir := t.TempDir()
+	project := filepath.Join(dir, "project")
+	if err := os.MkdirAll(project, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, dir, "scan.py", `#!/bin/sh
+printf '[{"func_name":"direct_executable","file_path":"src/direct.c","start_line":1}]'
+`)
+	if err := os.Chmod(filepath.Join(dir, "scan.py"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := RunScan(context.Background(), filepath.Join(dir, "scan.py"), project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].FuncName != "direct_executable" {
+		t.Fatalf("entries = %#v", entries)
 	}
 }
 

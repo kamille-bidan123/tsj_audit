@@ -61,6 +61,34 @@ def scan_directory(project_path):
 	}
 }
 
+func TestRunPythonScanSerializesModelDumpObjects(t *testing.T) {
+	dir := t.TempDir()
+	scanPath := filepath.Join(dir, "scan.py")
+	content := `
+class Entry:
+    def model_dump(self):
+        return {
+            "func_name": "model_dump_entry",
+            "file_path": "src/model.c",
+            "start_line": 3,
+        }
+
+def scan_directory(project_path):
+    return [Entry()]
+`
+	if err := os.WriteFile(scanPath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := RunPythonScan(context.Background(), scanPath, "/tmp/project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].FuncName != "model_dump_entry" {
+		t.Fatalf("entries = %#v", entries)
+	}
+}
+
 func containsAll(value string, needles ...string) bool {
 	for _, needle := range needles {
 		if !strings.Contains(value, needle) {

@@ -46,6 +46,22 @@ func (m *EchoTraceMock) RunJSON(ctx context.Context, req RunJSONRequest) (json.R
 		}
 		return raw, []Message{{Role: "assistant", Content: string(raw)}}, nil
 	}
+	if req.StageName == "EntryDiscovery" {
+		response := map[string]any{
+			"functions": []map[string]any{
+				{
+					"func_name":  "mock_discovered_entry",
+					"file_path":  "mock/discovered.c",
+					"start_line": 1,
+				},
+			},
+		}
+		raw, err := json.Marshal(response)
+		if err != nil {
+			return nil, nil, err
+		}
+		return raw, []Message{{Role: "assistant", Content: string(raw)}}, nil
+	}
 	if req.StageName != "Trace" {
 		return nil, nil, fmt.Errorf("echo mock does not support stage %q", req.StageName)
 	}

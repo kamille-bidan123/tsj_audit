@@ -349,22 +349,9 @@ func discoverAttackSurfaceEntries(ctx context.Context, client runtime.Client, cf
 	if err != nil {
 		return nil, err
 	}
-	scanPath := filepath.Join(filepath.Dir(skillPath), "scripts", "scan.py")
-	var entries []models.EntrySpec
-	if nativeEntries, ok, err := scanner.RunAttackSurfaceScan(skillName, cfg.ProjectPath); err != nil {
+	entries, err := runEntryDiscovery(ctx, client, cfg, state, skillPath)
+	if err != nil {
 		return nil, err
-	} else if ok {
-		entries = nativeEntries
-	} else if _, err := os.Stat(scanPath); err == nil {
-		entries, err = scanner.RunScan(ctx, scanPath, cfg.ProjectPath)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		entries, err = runEntryDiscovery(ctx, client, cfg, state, skillPath)
-		if err != nil {
-			return nil, err
-		}
 	}
 	if cfg.OutputDir != "" {
 		if err := os.MkdirAll(cfg.OutputDir, 0755); err != nil {
