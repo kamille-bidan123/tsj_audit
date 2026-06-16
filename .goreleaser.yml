@@ -95,6 +95,17 @@ archives:
         formats:
           - zip
 
+  - id: skills
+    meta: true
+    name_template: skill
+    formats:
+      - zip
+    files:
+      - src: skills/**/*.md
+        dst: skills
+      - src: skills/**/*.py
+        dst: skills
+
 checksum:
   name_template: "checksums.txt"
 
