@@ -46,19 +46,6 @@ builds:
       - amd64
       - arm64
 
-  - id: scan
-    main: ./cmd/scan
-    binary: scan
-    env:
-      - CGO_ENABLED=0
-    goos:
-      - linux
-      - darwin
-      - windows
-    goarch:
-      - amd64
-      - arm64
-
   - id: civetweb-audit
     main: ./cmd/civetweb_audit
     binary: civetweb_audit
