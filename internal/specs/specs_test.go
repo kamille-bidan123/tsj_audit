@@ -31,4 +31,9 @@ func TestLoadDir(t *testing.T) {
 	if _, ok := specs["command_injection"]; !ok {
 		t.Fatalf("missing command_injection in %#v", specs)
 	}
+	if spec, ok := specs["ioctl_user_buffer_overflow"]; !ok {
+		t.Fatalf("missing ioctl_user_buffer_overflow in %#v", specs)
+	} else if spec.UserPrompt == "" {
+		t.Fatal("ioctl_user_buffer_overflow missing user prompt")
+	}
 }
