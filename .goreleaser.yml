@@ -105,6 +105,8 @@ archives:
         dst: skills
       - src: skills/**/*.py
         dst: skills
+      - src: audit_specs/**/*.yaml
+        dst: audit_specs
 
 checksum:
   name_template: "checksums.txt"
