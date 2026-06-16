@@ -58,7 +58,7 @@ func TestRunWithMockRuntimeWritesCheckpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	checkpointPath := filepath.Join(outputDir, "checkpoints", "handle_cli.json")
+	checkpointPath := filepath.Join(outputDir, "checkpoints", "src_http_c_3_handle_cli.json")
 	if _, err := os.Stat(checkpointPath); err != nil {
 		t.Fatalf("expected checkpoint at %s: %v", checkpointPath, err)
 	}

@@ -25,16 +25,25 @@ func TestEnsureWritesOfficialPermissionConfig(t *testing.T) {
 
 	config := readConfig(t, configPath)
 	permission := config["permission"].(map[string]any)
+	for _, name := range []string{"read", "glob", "grep", "list"} {
+		rules := permission[name].(map[string]any)
+		if rules["*"] != "allow" {
+			t.Fatalf("%s permission = %#v", name, rules)
+		}
+	}
 	bash := permission["bash"].(map[string]any)
-	if bash["rg *"] != "allow" || bash["*"] != "ask" {
+	if bash["rg *"] != "allow" || bash["head *"] != "allow" || bash["tail *"] != "allow" || bash["xargs *"] != "allow" || bash["pkg-config *"] != "allow" || bash["*"] != "ask" {
 		t.Fatalf("bash permission = %#v", bash)
 	}
 	external := permission["external_directory"].(map[string]any)
-	if external[projectDir] != "allow" || external[filepath.Join(projectDir, "**")] != "allow" || external["*"] != "ask" {
+	if external[projectDir] != "allow" || external[filepath.Join(projectDir, "**")] != "allow" || external["*"] != "allow" {
 		t.Fatalf("external_directory permission = %#v", external)
 	}
 	if permission["edit"] != "deny" {
 		t.Fatalf("edit permission = %#v", permission["edit"])
+	}
+	if permission["question"] != "deny" {
+		t.Fatalf("question permission = %#v", permission["question"])
 	}
 }
 

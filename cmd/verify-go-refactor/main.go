@@ -148,7 +148,7 @@ func run() error {
 		filepath.Join(outputDir, "audit_report.html"),
 		filepath.Join(outputDir, "audit_report.sarif"),
 		filepath.Join(outputDir, "audit_issues.sarif"),
-		filepath.Join(outputDir, "checkpoints", "verify_handler.json"),
+		filepath.Join(outputDir, "checkpoints", "src_verify_c_9_verify_handler.json"),
 	}
 	for _, path := range expected {
 		if _, err := os.Stat(path); err != nil {

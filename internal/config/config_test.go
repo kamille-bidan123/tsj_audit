@@ -86,6 +86,37 @@ func TestAuditTypesParsing(t *testing.T) {
 	}
 }
 
+func TestFunctionConcurrencyFromEnvAndCLI(t *testing.T) {
+	dir := t.TempDir()
+	configFile := filepath.Join(dir, "concurrency.env")
+	if err := os.WriteFile(configFile, []byte("function_concurrency = 2\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(Args{ConfigFile: configFile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.FunctionConcurrency != 2 {
+		t.Fatalf("FunctionConcurrency = %d", cfg.FunctionConcurrency)
+	}
+
+	cfg, err = Load(Args{ConfigFile: configFile, FunctionConcurrency: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.FunctionConcurrency != 4 {
+		t.Fatalf("CLI FunctionConcurrency = %d", cfg.FunctionConcurrency)
+	}
+}
+
+func TestFunctionConcurrencyDefaultsToOne(t *testing.T) {
+	cfg := defaults()
+	if cfg.FunctionConcurrency != 1 {
+		t.Fatalf("FunctionConcurrency = %d", cfg.FunctionConcurrency)
+	}
+}
+
 func TestBooleanEnvAndCLIOverrides(t *testing.T) {
 	dir := t.TempDir()
 	configFile := filepath.Join(dir, "opencode.env")
@@ -113,7 +144,7 @@ func TestBooleanEnvAndCLIOverrides(t *testing.T) {
 func TestOpenCodeProjectConfigOptionsFromEnv(t *testing.T) {
 	dir := t.TempDir()
 	configFile := filepath.Join(dir, "opencode.env")
-	content := "opencode_inject_project_config = false\nopencode_config_path = \"custom-opencode.json\"\n"
+	content := "opencode_inject_project_config = false\nopencode_config_path = \"custom-opencode.json\"\nopencode_request_retries = 4\n"
 	if err := os.WriteFile(configFile, []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -127,6 +158,9 @@ func TestOpenCodeProjectConfigOptionsFromEnv(t *testing.T) {
 	}
 	if cfg.OpenCodeConfigPath != "custom-opencode.json" {
 		t.Fatalf("OpenCodeConfigPath = %q", cfg.OpenCodeConfigPath)
+	}
+	if cfg.OpenCodeRequestRetries != 4 {
+		t.Fatalf("OpenCodeRequestRetries = %d", cfg.OpenCodeRequestRetries)
 	}
 }
 

@@ -24,6 +24,7 @@ func TestBuildUnifiedPromptIncludesRuntimeSchemaAndTask(t *testing.T) {
 		"OpenCode 当前会话目录已经设置为待审计源码根目录：/tmp/project",
 		"EntrySpec.file_path 是相对当前会话目录的路径",
 		"不要给源码路径添加 project_path、../ 前缀或绝对路径前缀",
+		"不要调用 question/AskUserQuestion/clarification 类工具",
 		"## JSON Schema",
 		`{"type":"object"}`,
 		"## User Task",

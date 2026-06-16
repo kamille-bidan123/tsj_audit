@@ -18,17 +18,13 @@ func (m *EchoTraceMock) RunJSON(ctx context.Context, req RunJSONRequest) (json.R
 		return nil, nil, err
 	}
 	if strings.HasPrefix(req.StageName, "Audit:") {
-		auditType := strings.TrimPrefix(req.StageName, "Audit:")
 		response := map[string]any{
-			"results": []map[string]any{
-				{
-					"vulnerability_type": auditType,
-					"is_vulnerable":      false,
-					"confidence":         "low",
-					"description":        "mock audit result",
-					"code_map":           []any{},
-				},
-			},
+			"is_vulnerable":  false,
+			"confidence":     "low",
+			"description":    "mock audit result",
+			"summary":        "mock audit result",
+			"recommendation": nil,
+			"findings":       []any{},
 		}
 		raw, err := json.Marshal(response)
 		if err != nil {
@@ -76,7 +72,6 @@ func (m *EchoTraceMock) RunJSON(ctx context.Context, req RunJSONRequest) (json.R
 		},
 		"code_logic":      "mock trace",
 		"code_map":        []any{},
-		"audit_results":   []any{},
 		"exploit_results": []any{},
 	}
 	raw, err := json.Marshal(response)

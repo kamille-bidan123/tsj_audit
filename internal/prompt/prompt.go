@@ -37,6 +37,7 @@ func BuildUnified(options Options) string {
 			"- 当前由 %s 运行 %s 阶段。\n"+
 			"%s"+
 			"- 最终回答必须是满足下方 JSON Schema 的 JSON 对象，不要输出 Markdown。\n"+
+			"- 不要调用 question/AskUserQuestion/clarification 类工具，不要向用户提问；信息不足时必须基于已读取代码继续分析，并在 JSON 字段中体现置信度和原因。\n"+
 			"- 所有 FunctionInfo、CodeMap、skill、runtime、schema 等字段注入都只存在于本统一 system prompt 中。\n\n"+
 			"## JSON Schema\n%s\n\n"+
 			"## User Task\n%s",

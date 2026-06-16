@@ -34,12 +34,28 @@ func Handler(state *Status) http.Handler {
 		state.SetConfirmationAnswer(request.Answer)
 		w.WriteHeader(http.StatusOK)
 	})
+	mux.HandleFunc("/api/select-function", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var request struct {
+			Key string `json:"key"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		state.SelectFunction(request.Key)
+		w.WriteHeader(http.StatusOK)
+	})
 	mux.HandleFunc("/api/permission", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 		var request struct {
+			ID    string `json:"id"`
 			Reply string `json:"reply"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
@@ -48,7 +64,10 @@ func Handler(state *Status) http.Handler {
 		}
 		switch request.Reply {
 		case "once", "always", "reject":
-			state.SetPermissionReply(request.Reply)
+			if !state.SetPermissionReply(request.ID, request.Reply) {
+				http.Error(w, "permission request not found", http.StatusNotFound)
+				return
+			}
 			w.WriteHeader(http.StatusOK)
 		default:
 			http.Error(w, "invalid permission reply", http.StatusBadRequest)
@@ -98,7 +117,7 @@ const statusHTML = `<!doctype html>
       background: linear-gradient(90deg, var(--accent), var(--blue) 52%, #8b5b13);
       z-index: 5;
     }
-    .shell { min-height: 100vh; display: grid; grid-template-rows: auto 1fr; }
+    .shell { height: 100vh; min-height: 0; overflow: hidden; display: grid; grid-template-rows: auto minmax(0, 1fr); }
     header {
       display: grid;
       grid-template-columns: 1fr auto;
@@ -108,8 +127,7 @@ const statusHTML = `<!doctype html>
       border-bottom: 1px solid var(--line);
       background: linear-gradient(180deg, rgba(255,255,255,.94), rgba(250,251,248,.88));
       backdrop-filter: blur(16px);
-      position: sticky;
-      top: 0;
+      min-height: 0;
       z-index: 2;
       box-shadow: 0 1px 0 rgba(255,255,255,.75);
     }
@@ -143,8 +161,9 @@ const statusHTML = `<!doctype html>
     }
     .pill strong { color: var(--muted); font-weight: 650; text-transform: uppercase; font-size: 10px; letter-spacing: .04em; }
     .pill span { max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
-    main { display: grid; grid-template-columns: minmax(0, 1fr) minmax(380px, 440px); min-height: 0; }
-    .log-pane { min-width: 0; display: grid; grid-template-rows: auto auto 1fr; border-right: 1px solid var(--line); }
+    main { display: grid; grid-template-columns: minmax(0, 1fr) minmax(380px, 440px); min-height: 0; overflow: hidden; }
+    .log-pane { min-width: 0; min-height: 0; overflow: hidden; display: grid; grid-template-rows: auto auto minmax(0, 1fr); border-right: 1px solid var(--line); }
+    .log-wrap { position: relative; min-height: 0; overflow: hidden; }
     .toolbar, .side-head {
       display: flex;
       align-items: center;
@@ -156,7 +175,7 @@ const statusHTML = `<!doctype html>
     }
     .toolbar h2, .side-head h2 { margin: 0; font-size: 14px; font-weight: 700; }
     .toolbar-meta { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 12px; }
-    .metrics { display: grid; grid-template-columns: repeat(3, 1fr); border-bottom: 1px solid var(--line); background: #fff; }
+    .metrics { display: grid; grid-template-columns: repeat(4, 1fr); border-bottom: 1px solid var(--line); background: #fff; }
     .metric { padding: 13px 16px; border-right: 1px solid var(--line); }
     .metric:last-child { border-right: 0; }
     .metric span { display: block; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; font-weight: 700; }
@@ -183,13 +202,24 @@ const statusHTML = `<!doctype html>
       background: linear-gradient(180deg, rgba(255,255,255,.035), rgba(255,255,255,0) 120px), #101719;
       color: #dce7e4;
       font: 12.5px/1.52 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      min-height: 420px;
+      min-height: 0;
+      height: 100%;
     }
+    .follow-float {
+      position: absolute;
+      right: 18px;
+      bottom: 18px;
+      z-index: 3;
+      box-shadow: 0 12px 28px rgba(0,0,0,.22);
+      border-color: rgba(255,255,255,.25);
+      background: #ffffff;
+    }
+    .follow-float.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
     .log-line { white-space: pre-wrap; overflow-wrap: anywhere; padding: 2px 0 2px 12px; border-left: 2px solid transparent; }
     .log-line.warn { color: #ffd58a; border-left-color: #d79a2b; background: rgba(215,154,43,.08); }
     .log-line.error { color: #ffb4aa; border-left-color: #d66557; background: rgba(214,101,87,.08); }
     .empty { color: #8ba29c; padding: 18px 12px; }
-    .side { min-width: 0; display: grid; grid-template-rows: auto auto auto 1fr; background: var(--panel); }
+    .side { min-width: 0; min-height: 0; overflow: hidden; display: grid; grid-template-rows: auto auto auto minmax(0, 1fr); background: var(--panel); }
     .prompt {
       display: none;
       padding: 16px 18px;
@@ -207,14 +237,24 @@ const statusHTML = `<!doctype html>
       font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     }
     .prompt-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+    .permission-list { display: grid; gap: 10px; }
+    .permission-card {
+      border: 1px solid #e4c990;
+      background: rgba(255,255,255,.7);
+      border-radius: 7px;
+      padding: 10px;
+    }
+    .permission-card pre { margin-bottom: 10px; }
     .details { padding: 16px 18px; border-bottom: 1px solid var(--line); display: grid; gap: 12px; }
     .row { display: grid; grid-template-columns: 108px minmax(0, 1fr); gap: 10px; font-size: 13px; }
     .row span:first-child { color: var(--muted); font-weight: 650; }
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
-    .function-list { padding: 16px 18px; overflow: auto; }
+    .function-list { min-height: 0; padding: 16px 18px; overflow: auto; }
     .function-list h3 { margin: 0 0 12px; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
     .functions { display: grid; gap: 8px; }
     .function-item {
+      width: 100%;
+      text-align: left;
       border: 1px solid var(--line);
       background: var(--panel-soft);
       border-radius: 7px;
@@ -226,6 +266,7 @@ const statusHTML = `<!doctype html>
     .function-item.running { border-color: #8fc7bf; background: #eefaf7; }
     .function-item.done { border-color: #b7d8b9; background: #f1faef; }
     .function-item.skipped { border-color: #d8c8a8; background: #fbf6e8; }
+    .function-item.selected { outline: 2px solid var(--accent); outline-offset: 1px; }
     .function-item strong { display: block; margin-bottom: 4px; color: var(--accent-ink); }
     .function-meta { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
     .function-status { display: inline-flex; margin-top: 8px; padding: 2px 7px; border-radius: 999px; background: #fff; border: 1px solid var(--line); color: var(--muted); font-weight: 700; text-transform: uppercase; font-size: 10px; }
@@ -253,15 +294,19 @@ const statusHTML = `<!doctype html>
     <main>
       <section class="log-pane">
         <div class="toolbar">
-          <h2>Runtime Log</h2>
-          <div class="toolbar-meta"><span id="updated">waiting</span><button id="follow">Follow</button></div>
+          <h2 id="log-title">Runtime Log</h2>
+          <div class="toolbar-meta"><button id="global-log">Global</button><span id="updated">waiting</span></div>
         </div>
         <div class="metrics">
           <div class="metric"><span>Stage</span><strong id="metric-stage">-</strong></div>
           <div class="metric"><span>Function</span><strong id="metric-function">-</strong></div>
+          <div class="metric"><span>Agent Timer</span><strong id="metric-timer">-</strong></div>
           <div class="metric"><span>Log lines</span><strong id="metric-logs">0</strong></div>
         </div>
-        <div class="log" id="log"><div class="empty">等待运行时日志...</div></div>
+        <div class="log-wrap">
+          <div class="log" id="log"><div class="empty">等待运行时日志...</div></div>
+          <button class="follow-float primary" id="follow">Follow</button>
+        </div>
       </section>
       <aside class="side">
         <div class="side-head"><h2>Controls</h2><button id="refresh">Refresh</button></div>
@@ -272,14 +317,14 @@ const statusHTML = `<!doctype html>
         </div>
         <div class="prompt" id="permission-box">
           <h3>OpenCode 权限请求</h3>
-          <pre id="permission-text"></pre>
-          <div class="prompt-actions"><button class="primary" data-permission="once">批准本次</button><button data-permission="always">永久批准</button><button class="danger" data-permission="reject">拒绝</button></div>
+          <div class="permission-list" id="permission-list"></div>
         </div>
         <div class="details">
           <div class="row"><span>Runtime</span><span class="mono" id="detail-runtime">-</span></div>
           <div class="row"><span>Session</span><span class="mono" id="detail-session">-</span></div>
           <div class="row"><span>Function</span><span class="mono" id="detail-function">-</span></div>
           <div class="row"><span>Audit Type</span><span class="mono" id="detail-audit">-</span></div>
+          <div class="row"><span>Agent Timer</span><span class="mono" id="detail-timer">-</span></div>
         </div>
         <div class="function-list">
           <h3>Functions</h3>
@@ -289,7 +334,7 @@ const statusHTML = `<!doctype html>
     </main>
   </div>
   <script>
-    const state = { follow: true, lastLogLength: 0 };
+    const state = { follow: true, renderedLogLength: -1, renderedLastLog: "" };
     const $ = id => document.getElementById(id);
     function value(v) { return v === undefined || v === null || v === "" ? "-" : String(v); }
     function classify(line) {
@@ -301,14 +346,36 @@ const statusHTML = `<!doctype html>
     function renderLog(logs) {
       const box = $("log");
       const lines = Array.isArray(logs) ? logs : [];
+      const last = lines.length ? String(lines[lines.length - 1]) : "";
+      if (state.renderedLogLength === lines.length && state.renderedLastLog === last) return;
+      if (hasSelectionInside(box)) {
+        state.follow = false;
+        $("follow").textContent = "Paused";
+        $("follow").classList.toggle("primary", state.follow);
+        return;
+      }
       if (!lines.length) {
         box.innerHTML = '<div class="empty">等待运行时日志...</div>';
+        state.renderedLogLength = 0;
+        state.renderedLastLog = "";
         return;
       }
       box.innerHTML = lines.map(line => '<div class="log-line '+classify(line)+'">'+escapeHtml(line)+'</div>').join("");
-      if (state.follow) box.scrollTop = box.scrollHeight;
+      state.renderedLogLength = lines.length;
+      state.renderedLastLog = last;
+      if (state.follow) scrollLogToBottom();
     }
-    function renderFunctions(functions) {
+    function hasSelectionInside(element) {
+      const selection = window.getSelection && window.getSelection();
+      if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return false;
+      for (let index = 0; index < selection.rangeCount; index++) {
+        const range = selection.getRangeAt(index);
+        if (element.contains(range.commonAncestorContainer)) return true;
+        if (range.intersectsNode && range.intersectsNode(element)) return true;
+      }
+      return false;
+    }
+    function renderFunctions(functions, selectedKey) {
       const box = $("functions");
       const items = Array.isArray(functions) ? functions : [];
       if (!items.length) {
@@ -317,15 +384,26 @@ const statusHTML = `<!doctype html>
       }
       box.innerHTML = items.map(item => {
         const status = value(item.status).toLowerCase();
-        const meta = [item.file, item.skill].filter(Boolean).join(" · ");
-        return '<div class="function-item '+escapeHtml(status)+'"><strong>'+escapeHtml(item.name || "-")+'</strong><div class="function-meta">'+escapeHtml(meta || "-")+'</div><span class="function-status">'+escapeHtml(status)+'</span></div>';
+        const key = item.key || "";
+        const selected = key && key === selectedKey ? " selected" : "";
+        const sessions = Array.isArray(item.session_ids) && item.session_ids.length ? " · " + item.session_ids.length + " session" : "";
+        const timer = item.agent_timer ? " · " + formatDuration(item.agent_timer.remaining_milliseconds) + (item.agent_timer.paused ? " paused" : "") : "";
+        const meta = [item.file, item.skill].filter(Boolean).join(" · ") + sessions + timer;
+        return '<button class="function-item '+escapeHtml(status)+selected+'" data-function-key="'+escapeHtml(key)+'"><strong>'+escapeHtml(item.name || "-")+'</strong><div class="function-meta">'+escapeHtml(meta || "-")+'</div><div class="function-meta">'+escapeHtml(key || "-")+'</div><span class="function-status">'+escapeHtml(status)+'</span></button>';
       }).join("");
     }
-    function renderPermission(request) {
+    function renderPermissions(requests) {
       const box = $("permission-box");
-      if (!request) { box.classList.remove("active"); return; }
+      const list = $("permission-list");
+      const items = Array.isArray(requests) ? requests : [];
+      if (!items.length) { box.classList.remove("active"); list.innerHTML = ""; return; }
       box.classList.add("active");
-      $("permission-text").textContent = JSON.stringify(request, null, 2);
+      list.innerHTML = items.map(request => {
+        const id = request && request.id ? String(request.id) : "";
+        const body = escapeHtml(JSON.stringify(request, null, 2));
+        const escapedID = escapeHtml(id);
+        return '<div class="permission-card"><pre>'+body+'</pre><div class="prompt-actions"><button class="primary" data-permission-id="'+escapedID+'" data-permission="once">批准本次</button><button data-permission-id="'+escapedID+'" data-permission="always">永久批准</button><button class="danger" data-permission-id="'+escapedID+'" data-permission="reject">拒绝</button></div></div>';
+      }).join("");
     }
     function renderConfirm(prompt) {
       const box = $("confirm-box");
@@ -333,9 +411,34 @@ const statusHTML = `<!doctype html>
       box.classList.add("active");
       $("confirm-text").textContent = prompt;
     }
+    function renderAgentTimer(timer) {
+      if (!timer) {
+        $("metric-timer").textContent = "-";
+        $("detail-timer").textContent = "-";
+        return;
+      }
+      const remaining = formatDuration(timer.remaining_milliseconds);
+      const elapsed = formatDuration(timer.elapsed_milliseconds);
+      const paused = timer.paused ? " paused" : "";
+      const attempt = timer.max_attempts > 1 ? " · attempt "+timer.attempt+"/"+timer.max_attempts : "";
+      $("metric-timer").textContent = remaining + paused;
+      $("detail-timer").textContent = "elapsed " + elapsed + " · remaining " + remaining + attempt + (timer.pause_reason ? " · " + timer.pause_reason : "");
+    }
+    function formatDuration(ms) {
+      const value = Math.max(0, Number(ms || 0));
+      const seconds = Math.ceil(value / 1000);
+      const minutes = Math.floor(seconds / 60);
+      const rest = seconds % 60;
+      if (minutes <= 0) return String(rest) + "s";
+      return String(minutes) + "m " + String(rest).padStart(2, "0") + "s";
+    }
     async function postJSON(path, body) {
       await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       await refresh();
+    }
+    function scrollLogToBottom() {
+      const box = $("log");
+      box.scrollTop = box.scrollHeight;
     }
     async function refresh() {
       const response = await fetch("/api/status", { cache: "no-store" });
@@ -352,25 +455,40 @@ const statusHTML = `<!doctype html>
       $("detail-function").textContent = value(data.function_name);
       $("detail-audit").textContent = value(data.audit_type);
       $("updated").textContent = new Date().toLocaleTimeString();
+      $("log-title").textContent = data.selected_function_key ? "Function Log" : "Runtime Log";
       renderLog(data.logs);
-      renderFunctions(data.functions);
+      renderFunctions(data.functions, data.selected_function_key || "");
       renderConfirm(data.confirmation_prompt);
-      renderPermission(data.permission_request);
+      renderAgentTimer(data.agent_timer);
+      renderPermissions(Array.isArray(data.permission_requests) ? data.permission_requests : (data.permission_request ? [data.permission_request] : []));
     }
     function escapeHtml(value) {
       return String(value).replace(/[&<>"']/g, ch => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[ch]));
     }
     $("refresh").addEventListener("click", refresh);
+    $("global-log").addEventListener("click", () => postJSON("/api/select-function", { key: "" }));
+    $("functions").addEventListener("click", event => {
+      const button = event.target.closest("[data-function-key]");
+      if (!button) return;
+      postJSON("/api/select-function", { key: button.dataset.functionKey || "" });
+    });
     $("follow").addEventListener("click", () => {
-      state.follow = !state.follow;
+      state.follow = true;
+      scrollLogToBottom();
       $("follow").textContent = state.follow ? "Follow" : "Paused";
+      $("follow").classList.toggle("primary", state.follow);
     });
     document.querySelectorAll("[data-confirm]").forEach(button => button.addEventListener("click", () => postJSON("/api/confirm", { answer: button.dataset.confirm === "true" })));
-    document.querySelectorAll("[data-permission]").forEach(button => button.addEventListener("click", () => postJSON("/api/permission", { reply: button.dataset.permission })));
+    $("permission-box").addEventListener("click", event => {
+      const button = event.target.closest("[data-permission]");
+      if (!button) return;
+      postJSON("/api/permission", { id: button.dataset.permissionId || "", reply: button.dataset.permission });
+    });
     $("log").addEventListener("scroll", event => {
       const el = event.currentTarget;
       state.follow = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
       $("follow").textContent = state.follow ? "Follow" : "Paused";
+      $("follow").classList.toggle("primary", state.follow);
     });
     refresh();
     setInterval(refresh, 1200);

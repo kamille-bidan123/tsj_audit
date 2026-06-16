@@ -38,6 +38,11 @@ func Ensure(configPath string, projectPath string) (string, error) {
 	permissions := objectValue(config["permission"])
 	config["permission"] = permissions
 
+	readAllowRules := map[string]string{"*": "allow"}
+	permissions["read"] = mergeRules(permissions["read"], readAllowRules)
+	permissions["glob"] = mergeRules(permissions["glob"], readAllowRules)
+	permissions["grep"] = mergeRules(permissions["grep"], readAllowRules)
+	permissions["list"] = mergeRules(permissions["list"], readAllowRules)
 	permissions["bash"] = mergeRules(permissions["bash"], map[string]string{
 		"*":                               "ask",
 		"pwd":                             "allow",
@@ -47,6 +52,10 @@ func Ensure(configPath string, projectPath string) (string, error) {
 		"rg *":                            "allow",
 		"grep *":                          "allow",
 		"find *":                          "allow",
+		"head *":                          "allow",
+		"tail *":                          "allow",
+		"xargs *":                         "allow",
+		"pkg-config *":                    "allow",
 		"python scripts/scan.py *":        "allow",
 		"python3 scripts/scan.py *":       "allow",
 		"python scripts/scan_ioctl.py *":  "allow",
@@ -58,12 +67,15 @@ func Ensure(configPath string, projectPath string) (string, error) {
 		"go run ./cmd/scan *":                               "allow",
 	})
 	permissions["external_directory"] = mergeRules(permissions["external_directory"], map[string]string{
-		"*":                                 "ask",
+		"*":                                 "allow",
 		absProjectPath:                      "allow",
 		filepath.Join(absProjectPath, "**"): "allow",
 	})
 	if _, ok := permissions["edit"]; !ok {
 		permissions["edit"] = "deny"
+	}
+	if _, ok := permissions["question"]; !ok {
+		permissions["question"] = "deny"
 	}
 
 	if err := os.MkdirAll(filepath.Dir(absConfigPath), 0755); err != nil {

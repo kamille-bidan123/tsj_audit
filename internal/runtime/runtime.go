@@ -9,6 +9,8 @@ import (
 
 type RunJSONRequest struct {
 	StageName    string
+	EntryKey     string
+	FunctionName string
 	SystemPrompt string
 	UserPrompt   string
 	Schema       json.RawMessage

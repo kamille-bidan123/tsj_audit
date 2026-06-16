@@ -46,11 +46,6 @@ func run(stderr io.Writer, args []string) error {
 		return nil
 	}
 	runCtx := context.Background()
-	if cfg.ExternalRuntimeTimeoutSeconds > 0 {
-		var cancel context.CancelFunc
-		runCtx, cancel = context.WithTimeout(runCtx, time.Duration(cfg.ExternalRuntimeTimeoutSeconds)*time.Second)
-		defer cancel()
-	}
 	state := status.New()
 	service := startStatusService(stderr, state)
 	if service != nil {
@@ -181,7 +176,9 @@ func createRuntime(cfg config.Config) (runtime.Client, error) {
 			ProjectDir:           cfg.ProjectPath,
 			EnableEventStream:    cfg.OpenCodeEnableEventStream,
 			StructuredOutputMode: cfg.OpenCodeStructuredOutputMode,
-			HTTPClient:           &http.Client{Timeout: time.Duration(cfg.ExternalRuntimeTimeoutSeconds) * time.Second},
+			RequestRetries:       cfg.OpenCodeRequestRetries,
+			RequestTimeout:       time.Duration(cfg.ExternalRuntimeTimeoutSeconds) * time.Second,
+			HTTPClient:           &http.Client{},
 		}), nil
 	case "codex", "claudecode":
 		return runtime.Command{
@@ -232,6 +229,7 @@ func loadConfigWithOutput(args []string, output io.Writer) (config.Config, error
 	flags.StringVar(&cli.OutputDir, "output-dir", "", "output directory")
 	flags.StringVar(&cli.TargetBaseURL, "target-base-url", "", "target base URL")
 	flags.StringVar(&cli.AuditTypes, "audit-types", "", "audit types")
+	flags.IntVar(&cli.FunctionConcurrency, "function-concurrency", 0, "number of functions to audit concurrently")
 
 	disableExploit := flags.Bool("disable-exploit", false, "disable exploit stage")
 	enableFallbackAudit := flags.Bool("enable-fallback-audit", false, "enable fallback audit")

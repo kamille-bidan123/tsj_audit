@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -109,14 +110,12 @@ func TestOpenCodeCreatesSessionWithProjectDirectory(t *testing.T) {
 			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 				switch req.Method + " " + req.URL.Path {
 				case "POST /session":
-					if req.Body != nil {
-						data, err := io.ReadAll(req.Body)
-						if err != nil {
-							t.Fatal(err)
-						}
-						if strings.TrimSpace(string(data)) != "" {
-							t.Fatalf("session body = %s", data)
-						}
+					var body map[string]string
+					if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+						t.Fatal(err)
+					}
+					if !strings.HasPrefix(body["title"], "tsj-audit ") {
+						t.Fatalf("session body = %#v", body)
 					}
 					if req.Header.Get("x-opencode-directory") != url.PathEscape(projectDir) {
 						t.Fatalf("directory header = %q", req.Header.Get("x-opencode-directory"))
@@ -153,6 +152,8 @@ func TestOpenCodeRunJSONUpdatesRuntimeStatus(t *testing.T) {
 				return jsonResponse(200, `{"assistant":"ok"}`), nil
 			case "GET /permission":
 				return jsonResponse(200, `[]`), nil
+			case "GET /question":
+				return jsonResponse(200, `[]`), nil
 			case "DELETE /session/session-1":
 				return jsonResponse(200, `{}`), nil
 			default:
@@ -176,6 +177,189 @@ func TestOpenCodeRunJSONUpdatesRuntimeStatus(t *testing.T) {
 	}
 }
 
+func TestOpenCodeRunJSONCleansSessionAfterContextDeadline(t *testing.T) {
+	deleted := make(chan struct{})
+	client := NewOpenCode("http://opencode.local", &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			switch req.Method + " " + req.URL.Path {
+			case "POST /session":
+				return jsonResponse(200, `{"id":"session-1"}`), nil
+			case "POST /session/session-1/message":
+				<-req.Context().Done()
+				return nil, req.Context().Err()
+			case "DELETE /session/session-1":
+				close(deleted)
+				return jsonResponse(200, `{}`), nil
+			default:
+				t.Fatalf("unexpected request: %s %s", req.Method, req.URL.Path)
+				return nil, nil
+			}
+		}),
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
+	defer cancel()
+	if _, _, err := client.RunJSON(ctx, RunJSONRequest{StageName: "Trace", UserPrompt: "hello"}); err == nil {
+		t.Fatal("expected context deadline")
+	}
+	select {
+	case <-deleted:
+	case <-time.After(time.Second):
+		t.Fatal("session was not deleted after context deadline")
+	}
+}
+
+func TestOpenCodeRunJSONRetriesMessageTimeoutWithNewSession(t *testing.T) {
+	var calls []string
+	client := NewOpenCodeWithOptions(OpenCodeOptions{
+		BaseURL:        "http://opencode.local",
+		RequestRetries: 1,
+		HTTPClient: &http.Client{
+			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				call := req.Method + " " + req.URL.Path
+				calls = append(calls, call)
+				switch call {
+				case "POST /session":
+					if countCalls(calls, "POST /session") == 1 {
+						return jsonResponse(200, `{"id":"session-1"}`), nil
+					}
+					return jsonResponse(200, `{"id":"session-2"}`), nil
+				case "POST /session/session-1/message":
+					return nil, timeoutError{message: "context deadline exceeded"}
+				case "DELETE /session/session-1":
+					return jsonResponse(200, `{}`), nil
+				case "POST /session/session-2/message":
+					return jsonResponse(200, `{"assistant":"ok"}`), nil
+				case "DELETE /session/session-2":
+					return jsonResponse(200, `{}`), nil
+				default:
+					t.Fatalf("unexpected request: %s", call)
+					return nil, nil
+				}
+			}),
+		},
+	})
+
+	raw, _, err := client.RunJSON(context.Background(), RunJSONRequest{StageName: "Trace", UserPrompt: "hello"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != `{"assistant":"ok"}` {
+		t.Fatalf("raw = %s", raw)
+	}
+	if countCalls(calls, "POST /session") != 2 {
+		t.Fatalf("calls = %#v", calls)
+	}
+}
+
+func TestOpenCodeRunJSONPausesTimeoutWhilePermissionIsPending(t *testing.T) {
+	state := status.New()
+	go func() {
+		deadline := time.After(time.Second)
+		ticker := time.NewTicker(10 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-deadline:
+				return
+			case <-ticker.C:
+				snapshot := state.Snapshot()
+				if len(snapshot.PermissionRequests) == 0 {
+					continue
+				}
+				time.Sleep(120 * time.Millisecond)
+				state.SetPermissionReply(snapshot.PermissionRequests[0].ID, "once")
+				return
+			}
+		}
+	}()
+	replied := make(chan struct{})
+	client := NewOpenCodeWithOptions(OpenCodeOptions{
+		BaseURL:        "http://opencode.local",
+		RequestTimeout: 50 * time.Millisecond,
+		HTTPClient: &http.Client{
+			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				switch req.Method + " " + req.URL.Path {
+				case "POST /session":
+					return jsonResponse(200, `{"id":"session-1"}`), nil
+				case "GET /permission":
+					return jsonResponse(200, `[{"id":"perm-1","sessionID":"session-1","permission":"bash"}]`), nil
+				case "GET /question":
+					return jsonResponse(200, `[]`), nil
+				case "POST /permission/perm-1/reply":
+					close(replied)
+					return jsonResponse(200, `true`), nil
+				case "POST /session/session-1/message":
+					select {
+					case <-replied:
+						return jsonResponse(200, `{"assistant":"ok"}`), nil
+					case <-req.Context().Done():
+						return nil, req.Context().Err()
+					}
+				case "DELETE /session/session-1":
+					return jsonResponse(200, `{}`), nil
+				default:
+					t.Fatalf("unexpected request: %s %s", req.Method, req.URL.Path)
+					return nil, nil
+				}
+			}),
+		},
+	})
+
+	raw, _, err := client.RunJSON(context.Background(), RunJSONRequest{
+		StageName:  "Trace",
+		UserPrompt: "hello",
+		Status:     state,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != `{"assistant":"ok"}` {
+		t.Fatalf("raw = %s", raw)
+	}
+}
+
+func TestOpenCodeRunJSONTimesOutAfterActiveTimeBudget(t *testing.T) {
+	state := status.New()
+	client := NewOpenCodeWithOptions(OpenCodeOptions{
+		BaseURL:        "http://opencode.local",
+		RequestRetries: 0,
+		RequestTimeout: 30 * time.Millisecond,
+		HTTPClient: &http.Client{
+			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				switch req.Method + " " + req.URL.Path {
+				case "POST /session":
+					return jsonResponse(200, `{"id":"session-1"}`), nil
+				case "GET /permission":
+					return jsonResponse(200, `[]`), nil
+				case "GET /question":
+					return jsonResponse(200, `[]`), nil
+				case "POST /session/session-1/message":
+					<-req.Context().Done()
+					return nil, req.Context().Err()
+				case "DELETE /session/session-1":
+					return jsonResponse(200, `{}`), nil
+				default:
+					t.Fatalf("unexpected request: %s %s", req.Method, req.URL.Path)
+					return nil, nil
+				}
+			}),
+		},
+	})
+
+	_, _, err := client.RunJSON(context.Background(), RunJSONRequest{
+		StageName:  "Trace",
+		UserPrompt: "hello",
+		Status:     state,
+	})
+	if err == nil {
+		t.Fatal("expected timeout")
+	}
+	if !isRetryableTimeout(context.Background(), err) {
+		t.Fatalf("expected retryable timeout, got %T %v", err, err)
+	}
+}
+
 func TestOpenCodeRunJSONPollsPermissionsDuringSession(t *testing.T) {
 	state := status.New()
 	replied := make(chan struct{})
@@ -189,12 +373,14 @@ func TestOpenCodeRunJSONPollsPermissionsDuringSession(t *testing.T) {
 					return jsonResponse(200, `{"id":"session-1"}`), nil
 				case "GET /permission":
 					return jsonResponse(200, `[{"id":"perm-1","sessionID":"session-1","permission":"edit"}]`), nil
+				case "GET /question":
+					return jsonResponse(200, `[]`), nil
 				case "POST /permission/perm-1/reply":
 					var body map[string]any
 					if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
 						t.Fatal(err)
 					}
-					if body["response"] != "reject" {
+					if body["reply"] != "reject" {
 						t.Fatalf("body = %#v", body)
 					}
 					close(replied)
@@ -245,12 +431,14 @@ func TestOpenCodeRunJSONHandlesPermissionEventStream(t *testing.T) {
 					return jsonResponse(200, "data: {\"type\":\"permission.asked\",\"properties\":{\"id\":\"perm-1\",\"sessionID\":\"session-1\",\"permission\":\"edit\"}}\n\n"), nil
 				case "GET /permission":
 					return jsonResponse(200, `[]`), nil
+				case "GET /question":
+					return jsonResponse(200, `[]`), nil
 				case "POST /permission/perm-1/reply":
 					var body map[string]any
 					if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
 						t.Fatal(err)
 					}
-					if body["response"] != "once" {
+					if body["reply"] != "once" {
 						t.Fatalf("body = %#v", body)
 					}
 					close(replied)
@@ -279,6 +467,234 @@ func TestOpenCodeRunJSONHandlesPermissionEventStream(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestOpenCodeRunJSONRejectsQuestionsDuringSession(t *testing.T) {
+	state := status.New()
+	rejected := make(chan struct{})
+	client := NewOpenCodeWithOptions(OpenCodeOptions{
+		BaseURL: "http://opencode.local",
+		HTTPClient: &http.Client{
+			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				switch req.Method + " " + req.URL.Path {
+				case "POST /session":
+					return jsonResponse(200, `{"id":"session-1"}`), nil
+				case "GET /permission":
+					return jsonResponse(200, `[]`), nil
+				case "GET /question":
+					return jsonResponse(200, `[{"id":"que-1","sessionID":"session-1","questions":[{"header":"Need context","question":"What is strMsg?"}]}]`), nil
+				case "POST /question/que-1/reject":
+					close(rejected)
+					return jsonResponse(200, `true`), nil
+				case "POST /session/session-1/message":
+					select {
+					case <-rejected:
+					case <-time.After(time.Second):
+						t.Fatal("question poll did not reject before message")
+					}
+					return jsonResponse(200, `{"assistant":"ok"}`), nil
+				case "DELETE /session/session-1":
+					return jsonResponse(200, `{}`), nil
+				default:
+					t.Fatalf("unexpected request: %s %s", req.Method, req.URL.Path)
+					return nil, nil
+				}
+			}),
+		},
+	})
+
+	_, _, err := client.RunJSON(context.Background(), RunJSONRequest{
+		StageName:  "Audit",
+		UserPrompt: "hello",
+		Status:     state,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(state.Snapshot().Logs, "\n"), "[opencode:question] rejected id=que-1") {
+		t.Fatalf("question reject log missing: %#v", state.Snapshot().Logs)
+	}
+}
+
+func TestOpenCodeRunJSONRejectsQuestionEventStream(t *testing.T) {
+	state := status.New()
+	rejected := make(chan struct{})
+	client := NewOpenCodeWithOptions(OpenCodeOptions{
+		BaseURL:           "http://opencode.local",
+		EnableEventStream: true,
+		HTTPClient: &http.Client{
+			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				switch req.Method + " " + req.URL.Path {
+				case "POST /session":
+					return jsonResponse(200, `{"id":"session-1"}`), nil
+				case "GET /event":
+					return jsonResponse(200, "data: {\"type\":\"question.asked\",\"properties\":{\"id\":\"que-1\",\"sessionID\":\"session-1\",\"questions\":[{\"header\":\"Need context\",\"question\":\"What should I assume?\"}]}}\n\n"), nil
+				case "GET /permission", "GET /question":
+					return jsonResponse(200, `[]`), nil
+				case "POST /question/que-1/reject":
+					close(rejected)
+					return jsonResponse(200, `true`), nil
+				case "POST /session/session-1/message":
+					select {
+					case <-rejected:
+					case <-time.After(time.Second):
+						t.Fatal("event stream did not reject question before message")
+					}
+					return jsonResponse(200, `{"assistant":"ok"}`), nil
+				case "DELETE /session/session-1":
+					return jsonResponse(200, `{}`), nil
+				default:
+					t.Fatalf("unexpected request: %s %s", req.Method, req.URL.Path)
+					return nil, nil
+				}
+			}),
+		},
+	})
+
+	_, _, err := client.RunJSON(context.Background(), RunJSONRequest{
+		StageName:  "Audit",
+		UserPrompt: "hello",
+		Status:     state,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestOpenCodeToolEventLogsInputSummary(t *testing.T) {
+	state := status.New()
+	key := "Dice/DiceManager.h:71:CustomMsgApiHandler::handlePost"
+	state.SetRuntimeForTask(key, "opencode", "session-1")
+	client := NewOpenCodeWithOptions(OpenCodeOptions{BaseURL: "http://opencode.local"})
+	client.eventSessions["session-1"] = state
+
+	client.handleEvent(context.Background(), map[string]any{
+		"type":      "tool",
+		"sessionID": "session-1",
+		"messageID": "message-1",
+		"callID":    "call-1",
+		"tool":      "read",
+		"state": map[string]any{
+			"status": "completed",
+			"input": map[string]any{
+				"filePath": "Dice/DiceManager.h",
+				"offset":   float64(71),
+				"limit":    float64(80),
+			},
+			"title": "Dice/DiceManager.h",
+		},
+	})
+
+	logs := strings.Join(state.Snapshot().Logs, "\n")
+	for _, needle := range []string{
+		"tool=read",
+		"call=call-1",
+		"detail=Dice/DiceManager.h",
+		"input=filePath=Dice/DiceManager.h offset=71 limit=80",
+	} {
+		if !strings.Contains(logs, needle) {
+			t.Fatalf("logs missing %q:\n%s", needle, logs)
+		}
+	}
+}
+
+func TestOpenCodeToolEventLogsEachStatusOnce(t *testing.T) {
+	state := status.New()
+	key := "Dice/DiceManager.h:71:CustomMsgApiHandler::handlePost"
+	state.SetRuntimeForTask(key, "opencode", "session-1")
+	client := NewOpenCodeWithOptions(OpenCodeOptions{BaseURL: "http://opencode.local"})
+	client.eventSessions["session-1"] = state
+	event := map[string]any{
+		"type":      "tool",
+		"sessionID": "session-1",
+		"messageID": "message-1",
+		"callID":    "call-1",
+		"tool":      "grep",
+		"state": map[string]any{
+			"status": "completed",
+			"input":  map[string]any{"pattern": "mg_modify_passwords_file"},
+			"title":  "mg_modify_passwords_file",
+		},
+	}
+
+	client.handleEvent(context.Background(), event)
+	client.handleEvent(context.Background(), event)
+
+	logs := state.Snapshot().Logs
+	var count int
+	for _, line := range logs {
+		if strings.Contains(line, "tool=grep") && strings.Contains(line, "status=completed") {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("completed grep log count = %d, logs = %#v", count, logs)
+	}
+}
+
+func TestOpenCodeEventStreamIsSharedAcrossSessions(t *testing.T) {
+	state := status.New()
+	eventRequests := 0
+	eventSeen := make(chan struct{})
+	sessionCreates := 0
+	var eventWriter *io.PipeWriter
+	client := NewOpenCodeWithOptions(OpenCodeOptions{
+		BaseURL:           "http://opencode.local",
+		EnableEventStream: true,
+		HTTPClient: &http.Client{
+			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				switch req.Method + " " + req.URL.Path {
+				case "POST /session":
+					sessionCreates++
+					return jsonResponse(200, fmt.Sprintf(`{"id":"session-%d"}`, sessionCreates)), nil
+				case "GET /event":
+					eventRequests++
+					if eventRequests == 1 {
+						close(eventSeen)
+					}
+					reader, writer := io.Pipe()
+					eventWriter = writer
+					return &http.Response{
+						StatusCode: 200,
+						Body:       reader,
+						Header:     make(http.Header),
+					}, nil
+				case "GET /permission":
+					return jsonResponse(200, `[]`), nil
+				case "GET /question":
+					return jsonResponse(200, `[]`), nil
+				case "POST /session/session-1/message", "POST /session/session-2/message":
+					return jsonResponse(200, `{"assistant":"ok"}`), nil
+				case "DELETE /session/session-1", "DELETE /session/session-2":
+					return jsonResponse(200, `{}`), nil
+				default:
+					t.Fatalf("unexpected request: %s %s", req.Method, req.URL.Path)
+					return nil, nil
+				}
+			}),
+		},
+	})
+
+	for i := 0; i < 2; i++ {
+		if _, _, err := client.RunJSON(context.Background(), RunJSONRequest{
+			StageName:  "Trace",
+			UserPrompt: "hello",
+			Status:     state,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	select {
+	case <-eventSeen:
+	case <-time.After(time.Second):
+		t.Fatal("event listener did not start")
+	}
+	if eventWriter != nil {
+		_ = eventWriter.Close()
+	}
+	if eventRequests != 1 {
+		t.Fatalf("event requests = %d, want 1", eventRequests)
 	}
 }
 
@@ -324,6 +740,60 @@ func TestOpenCodeRunJSONIncludesModelAndJSONSchemaFormat(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestExtractOpenCodeStructuredPayloadUnwrapsInputEnvelope(t *testing.T) {
+	raw := json.RawMessage(`{
+		"info": {
+			"structured": {
+				"input": {
+					"is_vulnerable": false,
+					"confidence": "high",
+					"description": "no command injection"
+				}
+			}
+		}
+	}`)
+
+	payload := extractOpenCodeStructuredPayload(raw)
+	var output map[string]any
+	if err := json.Unmarshal(payload, &output); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := output["input"]; ok {
+		t.Fatalf("payload still wrapped in input: %s", string(payload))
+	}
+	if output["confidence"] != "high" || output["description"] != "no command injection" {
+		t.Fatalf("payload = %#v", output)
+	}
+
+	toolRaw := json.RawMessage(`{
+		"parts": [
+			{
+				"type": "tool",
+				"tool": "StructuredOutput",
+				"state": {
+					"input": {
+						"input": {
+							"is_vulnerable": false,
+							"confidence": "low",
+							"description": "none"
+						}
+					}
+				}
+			}
+		]
+	}`)
+	payload = extractOpenCodeStructuredPayload(toolRaw)
+	if err := json.Unmarshal(payload, &output); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := output["input"]; ok {
+		t.Fatalf("tool payload still wrapped in input: %s", string(payload))
+	}
+	if output["confidence"] != "low" || output["description"] != "none" {
+		t.Fatalf("tool payload = %#v", output)
 	}
 }
 
@@ -422,7 +892,7 @@ func TestOpenCodeReplyPermission(t *testing.T) {
 				if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
 					t.Fatal(err)
 				}
-				if body["response"] != "always" {
+				if body["reply"] != "always" {
 					t.Fatalf("body = %#v", body)
 				}
 				return jsonResponse(200, `{"ok":true}`), nil
@@ -431,6 +901,24 @@ func TestOpenCodeReplyPermission(t *testing.T) {
 	})
 
 	if err := client.ReplyPermission(context.Background(), "perm-1", "always"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestOpenCodeRejectQuestion(t *testing.T) {
+	client := NewOpenCodeWithOptions(OpenCodeOptions{
+		BaseURL: "http://opencode.local",
+		HTTPClient: &http.Client{
+			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				if req.Method != "POST" || req.URL.Path != "/question/que-1/reject" {
+					t.Fatalf("unexpected request: %s %s", req.Method, req.URL.Path)
+				}
+				return jsonResponse(200, `true`), nil
+			}),
+		},
+	})
+
+	if err := client.RejectQuestion(context.Background(), "que-1"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -456,6 +944,30 @@ func TestParsePermissionEvent(t *testing.T) {
 	}
 	if len(request.Patterns) != 1 || request.Patterns[0] != "*.go" {
 		t.Fatalf("patterns = %#v", request.Patterns)
+	}
+}
+
+func TestParseQuestionEvent(t *testing.T) {
+	raw := map[string]any{
+		"type": "question.asked",
+		"properties": map[string]any{
+			"id":        "que-1",
+			"sessionID": "session-1",
+			"questions": []any{
+				map[string]any{"header": "Need context", "question": "What is strMsg?"},
+			},
+		},
+	}
+
+	request, ok := ParseQuestionEvent(raw)
+	if !ok {
+		t.Fatal("expected question event")
+	}
+	if request.ID != "que-1" || request.SessionID != "session-1" {
+		t.Fatalf("request = %#v", request)
+	}
+	if summarizeQuestionRequest(request) != "Need context: What is strMsg?" {
+		t.Fatalf("summary = %q", summarizeQuestionRequest(request))
 	}
 }
 
@@ -486,6 +998,77 @@ func TestOpenCodePollPermissionsUpdatesStatus(t *testing.T) {
 	}
 }
 
+func TestOpenCodePollQuestionsRejectsPendingQuestion(t *testing.T) {
+	state := status.New()
+	seen := map[string]bool{}
+	rejected := false
+	client := NewOpenCodeWithOptions(OpenCodeOptions{
+		BaseURL: "http://opencode.local",
+		HTTPClient: &http.Client{
+			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				switch req.Method + " " + req.URL.Path {
+				case "GET /question":
+					return jsonResponse(200, `[{"id":"que-1","sessionID":"session-1","questions":[{"header":"Need context","question":"What is strMsg?"}]}]`), nil
+				case "POST /question/que-1/reject":
+					rejected = true
+					return jsonResponse(200, `true`), nil
+				default:
+					t.Fatalf("unexpected request: %s %s", req.Method, req.URL.Path)
+					return nil, nil
+				}
+			}),
+		},
+	})
+
+	if err := client.PollQuestionsOnce(context.Background(), "session-1", state, seen); err != nil {
+		t.Fatal(err)
+	}
+	if !rejected || !seen["que-1"] {
+		t.Fatalf("rejected=%v seen=%#v", rejected, seen)
+	}
+}
+
+func TestOpenCodePollPermissionsRetriesWhenReplyFails(t *testing.T) {
+	state := status.New()
+	seen := map[string]bool{}
+	replyAttempts := 0
+	replyWhenAsked(t, state, "always")
+	client := NewOpenCodeWithOptions(OpenCodeOptions{
+		BaseURL: "http://opencode.local",
+		HTTPClient: &http.Client{
+			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				switch req.Method + " " + req.URL.Path {
+				case "GET /permission":
+					return jsonResponse(200, `[{"id":"perm-1","sessionID":"session-1","permission":"bash"}]`), nil
+				case "POST /permission/perm-1/reply":
+					replyAttempts++
+					if replyAttempts == 1 {
+						return jsonResponse(400, `{"name":"BadRequest"}`), nil
+					}
+					return jsonResponse(200, `true`), nil
+				default:
+					t.Fatalf("unexpected request: %s %s", req.Method, req.URL.Path)
+					return nil, nil
+				}
+			}),
+		},
+	})
+
+	if err := client.PollPermissionsOnce(context.Background(), "session-1", state, seen); err == nil {
+		t.Fatal("expected first reply to fail")
+	}
+	if seen["perm-1"] {
+		t.Fatal("failed reply should not mark permission as seen")
+	}
+	replyWhenAsked(t, state, "always")
+	if err := client.PollPermissionsOnce(context.Background(), "session-1", state, seen); err != nil {
+		t.Fatal(err)
+	}
+	if !seen["perm-1"] {
+		t.Fatal("successful reply should mark permission as seen")
+	}
+}
+
 func replyWhenAsked(t *testing.T, state *status.Status, reply string) {
 	t.Helper()
 	go func() {
@@ -497,8 +1080,13 @@ func replyWhenAsked(t *testing.T, state *status.Status, reply string) {
 			case <-deadline:
 				return
 			case <-ticker.C:
-				if state.Snapshot().PermissionRequest != nil {
-					state.SetPermissionReply(reply)
+				snapshot := state.Snapshot()
+				if len(snapshot.PermissionRequests) > 0 {
+					state.SetPermissionReply(snapshot.PermissionRequests[0].ID, reply)
+					return
+				}
+				if snapshot.PermissionRequest != nil {
+					state.SetPermissionReply(snapshot.PermissionRequest.ID, reply)
 					return
 				}
 			}
@@ -510,6 +1098,22 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
+}
+
+type timeoutError struct {
+	message string
+}
+
+func (e timeoutError) Error() string {
+	return e.message
+}
+
+func (e timeoutError) Timeout() bool {
+	return true
+}
+
+func (e timeoutError) Temporary() bool {
+	return true
 }
 
 func jsonResponse(status int, body string) *http.Response {
@@ -530,4 +1134,14 @@ func equalStrings(left, right []string) bool {
 		}
 	}
 	return true
+}
+
+func countCalls(calls []string, needle string) int {
+	count := 0
+	for _, call := range calls {
+		if call == needle {
+			count++
+		}
+	}
+	return count
 }

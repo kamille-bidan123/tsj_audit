@@ -12,25 +12,23 @@ type TraceOutput struct {
 
 type AuditOutput struct {
 	IsVulnerable   bool                 `json:"is_vulnerable"`
-	Confidence     string               `json:"confidence"`
-	Description    string               `json:"description"`
+	Confidence     string               `json:"confidence" schema:"minLength=1"`
+	Description    string               `json:"description" schema:"minLength=1"`
 	Summary        string               `json:"summary"`
-	TaintFlow      *string              `json:"taint_flow,omitempty"`
 	Recommendation *string              `json:"recommendation,omitempty"`
-	CodeMap        []CodeContext        `json:"code_map"`
 	Findings       []AuditFindingOutput `json:"findings"`
 }
 
 type AuditFindingOutput struct {
-	FindingID      *string       `json:"finding_id,omitempty"`
-	Title          string        `json:"title"`
-	Severity       *string       `json:"severity,omitempty"`
-	IsVulnerable   bool          `json:"is_vulnerable"`
-	Confidence     string        `json:"confidence"`
-	Description    string        `json:"description"`
-	TaintFlow      *string       `json:"taint_flow,omitempty"`
-	Recommendation *string       `json:"recommendation,omitempty"`
-	CodeMap        []CodeContext `json:"code_map"`
+	FindingID       *string           `json:"finding_id,omitempty"`
+	Title           string            `json:"title" schema:"minLength=1"`
+	Severity        *string           `json:"severity,omitempty"`
+	IsVulnerable    bool              `json:"is_vulnerable"`
+	Confidence      string            `json:"confidence" schema:"minLength=1"`
+	Description     string            `json:"description" schema:"minLength=1"`
+	Recommendation  *string           `json:"recommendation,omitempty"`
+	PrimaryLocation FindingLocation   `json:"primary_location"`
+	DataFlows       []FindingDataFlow `json:"data_flows"`
 }
 
 type ExploitOutput struct {

@@ -20,7 +20,9 @@ type Config struct {
 	OpenCodeRequirePromptFallbackConfirmation bool     `json:"opencode_require_prompt_fallback_confirmation"`
 	OpenCodeInjectProjectConfig               bool     `json:"opencode_inject_project_config"`
 	OpenCodeConfigPath                        string   `json:"opencode_config_path"`
+	OpenCodeRequestRetries                    int      `json:"opencode_request_retries"`
 	ExternalRuntimeTimeoutSeconds             int      `json:"external_runtime_timeout_seconds"`
+	FunctionConcurrency                       int      `json:"function_concurrency"`
 	DisableExploit                            bool     `json:"disable_exploit"`
 	EnableFallbackAudit                       bool     `json:"enable_fallback_audit"`
 	AuditTypes                                []string `json:"audit_types"`
@@ -55,6 +57,7 @@ type Args struct {
 	OutputDir                    string
 	TargetBaseURL                string
 	AuditTypes                   string
+	FunctionConcurrency          int
 }
 
 func Load(args Args) (Config, error) {
@@ -82,7 +85,9 @@ func defaults() Config {
 		OpenCodeRequirePromptFallbackConfirmation: true,
 		OpenCodeInjectProjectConfig:               true,
 		OpenCodeConfigPath:                        "opencode.json",
+		OpenCodeRequestRetries:                    2,
 		ExternalRuntimeTimeoutSeconds:             1800,
+		FunctionConcurrency:                       1,
 		ProjectPath:                               ".",
 		OutputDir:                                 "output",
 		TargetBaseURL:                             "http://localhost:8081",
@@ -159,8 +164,12 @@ func applyEnv(cfg *Config, values map[string]string) {
 			cfg.OpenCodeInjectProjectConfig = parseBool(value)
 		case "opencode_config_path":
 			cfg.OpenCodeConfigPath = value
+		case "opencode_request_retries":
+			cfg.OpenCodeRequestRetries = parseInt(value, cfg.OpenCodeRequestRetries)
 		case "external_runtime_timeout_seconds":
 			cfg.ExternalRuntimeTimeoutSeconds = parseInt(value, cfg.ExternalRuntimeTimeoutSeconds)
+		case "function_concurrency":
+			cfg.FunctionConcurrency = parseInt(value, cfg.FunctionConcurrency)
 		case "disable_exploit":
 			cfg.DisableExploit = parseBool(value)
 		case "enable_fallback_audit":
@@ -243,6 +252,9 @@ func applyArgs(cfg *Config, args Args) {
 	}
 	if args.AuditTypes != "" {
 		cfg.AuditTypes = parseList(args.AuditTypes)
+	}
+	if args.FunctionConcurrency > 0 {
+		cfg.FunctionConcurrency = args.FunctionConcurrency
 	}
 }
 

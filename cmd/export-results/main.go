@@ -10,11 +10,12 @@ import (
 
 func main() {
 	outputDir := flag.String("output-dir", "output", "output directory containing checkpoints")
+	inheritSARIF := flag.String("inherit-sarif", "", "old SARIF path whose SARIF Explorer review notes should be inherited")
 	flag.Parse()
 	if flag.NArg() > 0 {
 		*outputDir = flag.Arg(0)
 	}
-	artifacts, err := reportexport.WriteReports(*outputDir)
+	artifacts, err := reportexport.WriteReportsWithOptions(*outputDir, reportexport.Options{InheritSARIFPath: *inheritSARIF})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

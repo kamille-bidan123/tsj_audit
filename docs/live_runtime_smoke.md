@@ -17,7 +17,7 @@ Date: 2026-06-01
   - `audit_report.html`
   - `audit_report.sarif`
   - `audit_issues.sarif`
-  - `checkpoints/live_handler.json`
+  - checkpoint 文件；当前版本按 `file_path:start_line:func_name` 生成可读 key，并将文件名中的路径分隔符替换为 `_`
 
 ## Blocked By External Runtime Environment
 

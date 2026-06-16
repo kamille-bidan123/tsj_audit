@@ -85,7 +85,7 @@ audit_report.html
 audit_report.md
 audit_report.sarif
 audit_issues.sarif
-checkpoints/smoke_handler.json
+checkpoints/src_smoke_c_5_smoke_handler.json
 ```
 
 ## Verification

@@ -20,7 +20,7 @@ type Command struct {
 
 func (c Command) RunJSON(ctx context.Context, req RunJSONRequest) (json.RawMessage, []Message, error) {
 	if req.Status != nil {
-		req.Status.SetRuntime(c.Name, "-")
+		req.Status.SetRuntimeForTask(req.EntryKey, c.Name, "-")
 	}
 	command, input, outputPath, cleanup, err := c.build(req)
 	if err != nil {
@@ -31,6 +31,10 @@ func (c Command) RunJSON(ctx context.Context, req RunJSONRequest) (json.RawMessa
 	timeout := c.Timeout
 	if timeout == 0 {
 		timeout = 30 * time.Minute
+	}
+	if req.Status != nil {
+		req.Status.StartAgentTimerForFunction(req.EntryKey, req.StageName, timeout, 1, 1)
+		defer req.Status.StopAgentTimerForFunction(req.EntryKey)
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -46,7 +50,14 @@ func (c Command) RunJSON(ctx context.Context, req RunJSONRequest) (json.RawMessa
 	var stderr bytes.Buffer
 	process.Stdout = &stdout
 	process.Stderr = &stderr
+	started := time.Now()
+	if req.Status != nil {
+		req.Status.LogForFunction(req.EntryKey, fmt.Sprintf("[%s] starting command stage=%s dir=%s", c.Name, req.StageName, commandDir(c.ProjectDir)))
+	}
 	if err := process.Run(); err != nil {
+		if req.Status != nil {
+			req.Status.LogForFunction(req.EntryKey, fmt.Sprintf("[%s] command failed after %s: %s", c.Name, time.Since(started).Round(time.Millisecond), commandErrorDetail(stdout.Bytes(), stderr.Bytes())))
+		}
 		return nil, nil, fmt.Errorf("%s runtime failed: %w: %s", c.Name, err, commandErrorDetail(stdout.Bytes(), stderr.Bytes()))
 	}
 	raw := bytes.TrimSpace(stdout.Bytes())
@@ -55,6 +66,7 @@ func (c Command) RunJSON(ctx context.Context, req RunJSONRequest) (json.RawMessa
 			raw = bytes.TrimSpace(data)
 		}
 	}
+	rawBeforeUnwrap := append([]byte(nil), raw...)
 	if c.Name == "claudecode" {
 		raw, err = unwrapClaudeCodeOutput(raw)
 		if err != nil {
@@ -64,7 +76,14 @@ func (c Command) RunJSON(ctx context.Context, req RunJSONRequest) (json.RawMessa
 	if len(raw) == 0 {
 		return nil, nil, fmt.Errorf("%s runtime returned empty output", c.Name)
 	}
-	return json.RawMessage(raw), []Message{{Role: "assistant", Content: string(raw)}}, nil
+	if req.Status != nil {
+		req.Status.LogForFunction(req.EntryKey, fmt.Sprintf("[%s] completed command stage=%s duration=%s stdout_bytes=%d stderr_bytes=%d", c.Name, req.StageName, time.Since(started).Round(time.Millisecond), len(stdout.Bytes()), len(stderr.Bytes())))
+		if trimmed := strings.TrimSpace(stderr.String()); trimmed != "" {
+			req.Status.LogForFunction(req.EntryKey, fmt.Sprintf("[%s] stderr: %s", c.Name, truncateCommandLog(trimmed, 2000)))
+		}
+	}
+	messages := commandMessages(c.Name, raw, rawBeforeUnwrap)
+	return json.RawMessage(raw), messages, nil
 }
 
 func (c Command) build(req RunJSONRequest) ([]string, string, string, func(), error) {
@@ -118,7 +137,7 @@ func BuildCodexCommand(stageName, schemaPath, outputPath string) []string {
 }
 
 func BuildClaudeCodeCommand(prompt string) []string {
-	return []string{"claude", "-p", "--output-format", "json", prompt}
+	return []string{"claude", "-p", "--output-format", "json", "--permission-mode", "plan", prompt}
 }
 
 func commandErrorDetail(stdout []byte, stderr []byte) string {
@@ -133,6 +152,28 @@ func commandErrorDetail(stdout []byte, stderr []byte) string {
 		return "no output"
 	}
 	return strings.Join(parts, "\n")
+}
+
+func commandDir(projectDir string) string {
+	if projectDir == "" {
+		return "."
+	}
+	return projectDir
+}
+
+func commandMessages(runtimeName string, raw json.RawMessage, rawBeforeUnwrap []byte) []Message {
+	messages := []Message{{Role: "assistant", Content: string(raw)}}
+	if runtimeName == "claudecode" && len(bytes.TrimSpace(rawBeforeUnwrap)) > 0 && !bytes.Equal(bytes.TrimSpace(rawBeforeUnwrap), bytes.TrimSpace(raw)) {
+		messages = append(messages, Message{Role: "assistant_raw", Content: string(bytes.TrimSpace(rawBeforeUnwrap))})
+	}
+	return messages
+}
+
+func truncateCommandLog(value string, limit int) string {
+	if limit <= 0 || len(value) <= limit {
+		return value
+	}
+	return value[:limit] + "...[truncated]"
 }
 
 func unwrapClaudeCodeOutput(raw []byte) (json.RawMessage, error) {

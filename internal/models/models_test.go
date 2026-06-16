@@ -54,12 +54,15 @@ func TestTraceResultJSONShape(t *testing.T) {
 				IsEntryPoint: true,
 			},
 		},
-		AuditResults: []AuditResult{
+		AuditOutputs: []AuditStageOutput{
 			{
 				VulnerabilityType: "path_traversal",
-				IsVulnerable:      true,
-				Confidence:        "high",
-				Description:       "unsanitized path reaches file open",
+				Output: AuditOutput{
+					IsVulnerable: true,
+					Confidence:   "high",
+					Description:  "unsanitized path reaches file open",
+					Summary:      "unsanitized path reaches file open",
+				},
 			},
 		},
 	}
@@ -73,9 +76,40 @@ func TestTraceResultJSONShape(t *testing.T) {
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{"function_info", "code_logic", "code_map", "audit_results", "exploit_results"} {
+	for _, key := range []string{"function_info", "code_logic", "code_map", "audit_outputs", "exploit_results"} {
 		if _, ok := decoded[key]; !ok {
 			t.Fatalf("expected %q key in %s", key, string(data))
 		}
+	}
+	if _, ok := decoded["audit_results"]; ok {
+		t.Fatalf("did not expect audit_results key in %s", string(data))
+	}
+}
+
+func TestTraceResultReadsLegacyAuditResultsWithoutWritingThem(t *testing.T) {
+	data := []byte(`{
+		"function_info":{"func_name":"handle_request","file_path":"src/http.c","start_line":10,"end_line":20,"code_snippet":""},
+		"code_logic":"reads request path",
+		"code_map":[],
+		"audit_results":[{"vulnerability_type":"path_traversal","is_vulnerable":true,"confidence":"high","description":"legacy finding"}],
+		"exploit_results":[]
+	}`)
+	var result TraceResult
+	if err := json.Unmarshal(data, &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.LegacyAuditResults) != 1 || result.LegacyAuditResults[0].Description != "legacy finding" {
+		t.Fatalf("legacy audit results = %#v", result.LegacyAuditResults)
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := decoded["audit_results"]; ok {
+		t.Fatalf("legacy audit_results should not be written: %s", string(encoded))
 	}
 }

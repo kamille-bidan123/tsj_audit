@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"strconv"
 	"strings"
 
 	"tsj-audit/internal/models"
@@ -68,7 +69,7 @@ func objectSchema(t reflect.Type) map[string]any {
 		if name == "-" || name == "" {
 			continue
 		}
-		properties[name] = schemaForType(field.Type)
+		properties[name] = applyFieldSchemaOptions(schemaForType(field.Type), field)
 		required = append(required, name)
 	}
 	return map[string]any{
@@ -77,6 +78,26 @@ func objectSchema(t reflect.Type) map[string]any {
 		"required":             required,
 		"additionalProperties": false,
 	}
+}
+
+func applyFieldSchemaOptions(schema map[string]any, field reflect.StructField) map[string]any {
+	tag := field.Tag.Get("schema")
+	if tag == "" {
+		return schema
+	}
+	for _, option := range strings.Split(tag, ",") {
+		key, value, ok := strings.Cut(strings.TrimSpace(option), "=")
+		if !ok {
+			continue
+		}
+		switch key {
+		case "minLength":
+			if length, err := strconv.Atoi(value); err == nil {
+				schema["minLength"] = length
+			}
+		}
+	}
+	return schema
 }
 
 func jsonFieldName(field reflect.StructField) string {

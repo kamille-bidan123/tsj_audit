@@ -21,12 +21,16 @@ go run ./cmd/export-results --output-dir <output_dir>
 ### 参数
 
 - `output_dir`: 输出目录路径，该目录应包含 `checkpoints` 子目录
+- `--inherit-sarif <old.sarif>`: 读取 `<old.sarif>.sarifexplorer` 中的 SARIF Explorer 人工审核 `status/comment`，并迁移到新导出的 `.sarifexplorer` 文件
 
 ## 示例
 
 ```bash
 # 导出审计结果
 go run ./cmd/export-results --output-dir ./audit_results
+
+# 导出并继承旧 SARIF Explorer 审核结果
+go run ./cmd/export-results --output-dir ./audit_results --inherit-sarif ./old_reviewed.sarif
 ```
 
 ## 输出文件
@@ -38,6 +42,8 @@ go run ./cmd/export-results --output-dir ./audit_results
 - `audit_report.html` - HTML 审计报告
 - `audit_report.sarif` - SARIF 格式的完整分析结果
 - `audit_issues.sarif` - SARIF 格式的仅问题报告
+- `audit_report.sarif.sarifexplorer` - 使用 `--inherit-sarif` 时生成的 SARIF Explorer 人工审核结果
+- `audit_issues.sarif.sarifexplorer` - 使用 `--inherit-sarif` 时生成的仅问题 SARIF Explorer 人工审核结果
 
 ## 文件说明
 
