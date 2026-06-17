@@ -79,6 +79,9 @@ func Run(ctx context.Context, options Options) error {
 	if concurrency <= 1 {
 		for _, entry := range entries {
 			if err := runFunctionPipeline(ctx, options, entry); err != nil {
+				if skipFunctionAfterRuntimeRetries(options, entry, err) {
+					continue
+				}
 				return err
 			}
 		}
@@ -96,6 +99,9 @@ func Run(ctx context.Context, options Options) error {
 			defer workers.Done()
 			for entry := range jobs {
 				if err := runFunctionPipeline(ctx, options, entry); err != nil {
+					if skipFunctionAfterRuntimeRetries(options, entry, err) {
+						continue
+					}
 					select {
 					case errCh <- err:
 						cancel()
@@ -206,6 +212,16 @@ func runFunctionPipeline(ctx context.Context, options Options, entry models.Entr
 	options.Status.SetFunctionStatusByKey(entryKey, "done")
 	options.Status.LogForFunction(entryKey, "function completed: "+entryKey)
 	return nil
+}
+
+func skipFunctionAfterRuntimeRetries(options Options, entry models.EntrySpec, err error) bool {
+	if !runtime.IsSkippableRuntimeError(err) {
+		return false
+	}
+	entryKey := entry.Key()
+	options.Status.SetFunctionStatusByKey(entryKey, "skipped")
+	options.Status.LogForFunction(entryKey, "skipping function after runtime retries exhausted: "+err.Error())
+	return true
 }
 
 func functionStatuses(entries []models.EntrySpec) []status.FunctionStatus {

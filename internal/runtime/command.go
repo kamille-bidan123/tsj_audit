@@ -80,10 +80,18 @@ func (c Command) runJSONAttempt(ctx context.Context, req RunJSONRequest, attempt
 		req.Status.LogForFunction(req.EntryKey, fmt.Sprintf("[%s] starting command stage=%s dir=%s", c.Name, req.StageName, commandDir(c.ProjectDir)))
 	}
 	if err := process.Run(); err != nil {
-		if req.Status != nil {
-			req.Status.LogForFunction(req.EntryKey, fmt.Sprintf("[%s] command failed after %s: %s", c.Name, time.Since(started).Round(time.Millisecond), commandErrorDetail(stdout.Bytes(), stderr.Bytes())))
+		detail := commandErrorDetail(stdout.Bytes(), stderr.Bytes())
+		if ctx.Err() == context.DeadlineExceeded {
+			err = fmt.Errorf("%s runtime timed out after %s: %w: %s", c.Name, timeout, ErrCommandTimeout, detail)
+		} else if commandOutputEmpty(stdout.Bytes(), stderr.Bytes()) && isKilledExitError(err) {
+			err = fmt.Errorf("%s runtime was killed without output: %w: %v", c.Name, ErrCommandKilledNoOutput, err)
+		} else {
+			err = fmt.Errorf("%s runtime failed: %w: %s", c.Name, err, detail)
 		}
-		return nil, nil, fmt.Errorf("%s runtime failed: %w: %s", c.Name, err, commandErrorDetail(stdout.Bytes(), stderr.Bytes()))
+		if req.Status != nil {
+			req.Status.LogForFunction(req.EntryKey, fmt.Sprintf("[%s] command failed after %s: %v", c.Name, time.Since(started).Round(time.Millisecond), err))
+		}
+		return nil, nil, err
 	}
 	raw := bytes.TrimSpace(stdout.Bytes())
 	if outputPath != "" {
@@ -99,7 +107,7 @@ func (c Command) runJSONAttempt(ctx context.Context, req RunJSONRequest, attempt
 		}
 	}
 	if len(raw) == 0 {
-		return nil, nil, fmt.Errorf("%s runtime returned empty output: %w", c.Name, errCommandEmptyOutput)
+		return nil, nil, fmt.Errorf("%s runtime returned empty output: %w", c.Name, ErrCommandEmptyOutput)
 	}
 	if req.Status != nil {
 		req.Status.LogForFunction(req.EntryKey, fmt.Sprintf("[%s] completed command stage=%s duration=%s stdout_bytes=%d stderr_bytes=%d", c.Name, req.StageName, time.Since(started).Round(time.Millisecond), len(stdout.Bytes()), len(stderr.Bytes())))
@@ -200,6 +208,18 @@ func commandErrorDetail(stdout []byte, stderr []byte) string {
 	return strings.Join(parts, "\n")
 }
 
+func commandOutputEmpty(stdout []byte, stderr []byte) bool {
+	return len(bytes.TrimSpace(stdout)) == 0 && len(bytes.TrimSpace(stderr)) == 0
+}
+
+func isKilledExitError(err error) bool {
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		return false
+	}
+	return strings.Contains(strings.ToLower(exitErr.String()), "signal: killed")
+}
+
 func commandDir(projectDir string) string {
 	if projectDir == "" {
 		return "."
@@ -223,8 +243,10 @@ func truncateCommandLog(value string, limit int) string {
 }
 
 var (
-	errCommandEmptyOutput     = errors.New("command runtime returned empty output")
-	errClaudeCodeNoJSONObject = errors.New("claudecode result did not contain a JSON object")
+	ErrCommandEmptyOutput     = errors.New("command runtime returned empty output")
+	ErrCommandTimeout         = errors.New("command runtime timed out")
+	ErrCommandKilledNoOutput  = errors.New("command runtime killed without output")
+	ErrClaudeCodeNoJSONObject = errors.New("claudecode result did not contain a JSON object")
 )
 
 func unwrapClaudeCodeOutput(raw []byte) (json.RawMessage, error) {
@@ -245,21 +267,21 @@ func unwrapClaudeCodeOutput(raw []byte) (json.RawMessage, error) {
 		if json.Valid(wrapper.StructuredOutput) && bytes.HasPrefix(bytes.TrimSpace(wrapper.StructuredOutput), []byte("{")) {
 			return json.RawMessage(bytes.TrimSpace(wrapper.StructuredOutput)), nil
 		}
-		return nil, fmt.Errorf("%w: invalid structured_output %s", errClaudeCodeNoJSONObject, string(bytes.TrimSpace(wrapper.StructuredOutput)))
+		return nil, fmt.Errorf("%w: invalid structured_output %s", ErrClaudeCodeNoJSONObject, string(bytes.TrimSpace(wrapper.StructuredOutput)))
 	}
 	if len(bytes.TrimSpace(wrapper.Result)) == 0 {
-		return nil, fmt.Errorf("%w: missing result in %s", errClaudeCodeNoJSONObject, string(bytes.TrimSpace(raw)))
+		return nil, fmt.Errorf("%w: missing result in %s", ErrClaudeCodeNoJSONObject, string(bytes.TrimSpace(raw)))
 	}
 	if json.Valid(wrapper.Result) && bytes.HasPrefix(bytes.TrimSpace(wrapper.Result), []byte("{")) {
 		return json.RawMessage(bytes.TrimSpace(wrapper.Result)), nil
 	}
 	var resultText string
 	if err := json.Unmarshal(wrapper.Result, &resultText); err != nil {
-		return nil, fmt.Errorf("%w: %s", errClaudeCodeNoJSONObject, string(bytes.TrimSpace(wrapper.Result)))
+		return nil, fmt.Errorf("%w: %s", ErrClaudeCodeNoJSONObject, string(bytes.TrimSpace(wrapper.Result)))
 	}
 	extracted, ok := extractJSONObject(resultText)
 	if !ok {
-		return nil, fmt.Errorf("%w: %s", errClaudeCodeNoJSONObject, resultText)
+		return nil, fmt.Errorf("%w: %s", ErrClaudeCodeNoJSONObject, resultText)
 	}
 	return extracted, nil
 }
@@ -287,7 +309,14 @@ func claudeCodeErrorMessage(wrapper claudeCodeWrapper, raw []byte) string {
 }
 
 func isRetryableCommandRuntimeError(err error) bool {
-	return errors.Is(err, errCommandEmptyOutput) || errors.Is(err, errClaudeCodeNoJSONObject)
+	return IsSkippableRuntimeError(err)
+}
+
+func IsSkippableRuntimeError(err error) bool {
+	return errors.Is(err, ErrCommandEmptyOutput) ||
+		errors.Is(err, ErrCommandTimeout) ||
+		errors.Is(err, ErrCommandKilledNoOutput) ||
+		errors.Is(err, ErrClaudeCodeNoJSONObject)
 }
 
 func sleepBeforeCommandRetry(ctx context.Context, attempt int) error {

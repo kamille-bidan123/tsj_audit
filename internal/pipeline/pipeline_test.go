@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -71,6 +72,55 @@ func TestRunLoadsEntryCallsTraceAndSavesCheckpoint(t *testing.T) {
 	}
 	if !strings.Contains(string(logData), "starting trace") || !strings.Contains(string(logData), "function completed") {
 		t.Fatalf("function log = %s", logData)
+	}
+}
+
+func TestRunSkipsFunctionAfterRuntimeRetriesExhausted(t *testing.T) {
+	dir := t.TempDir()
+	entryPath := filepath.Join(dir, "entries.json")
+	entryJSON := `[
+		{"func_name":"first","file_path":"src/first.c","start_line":10},
+		{"func_name":"second","file_path":"src/second.c","start_line":20}
+	]`
+	if err := os.WriteFile(entryPath, []byte(entryJSON), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	outputDir := filepath.Join(dir, "output")
+	state := status.New()
+	client := &skipFirstTraceRuntime{}
+	err := Run(context.Background(), Options{
+		Config: config.Config{
+			Entry:          entryPath,
+			OutputDir:      outputDir,
+			DisableExploit: true,
+		},
+		Runtime:     client,
+		Status:      state,
+		Checkpoints: checkpoint.Store{OutputDir: outputDir},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	store := checkpoint.Store{OutputDir: outputDir}
+	if _, ok, err := store.Load("src/first.c:10:first"); err != nil {
+		t.Fatal(err)
+	} else if ok {
+		t.Fatal("first entry should be skipped without checkpoint")
+	}
+	if _, ok, err := store.Load("src/second.c:20:second"); err != nil {
+		t.Fatal(err)
+	} else if !ok {
+		t.Fatal("second entry should continue and save checkpoint")
+	}
+	logPath := filepath.Join(outputDir, "checkpoints", "logs", "src_first_c_10_first.jsonl")
+	logData, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(logData), "skipping function after runtime retries exhausted") {
+		t.Fatalf("first function log = %s", logData)
 	}
 }
 
@@ -1035,6 +1085,33 @@ def scan_directory(project_path):
 	if _, err := os.Stat(filepath.Join(outputDir, "discovered_functions.json")); err != nil {
 		t.Fatal(err)
 	}
+}
+
+type skipFirstTraceRuntime struct {
+	calls int
+}
+
+func (r *skipFirstTraceRuntime) RunJSON(ctx context.Context, req runtime.RunJSONRequest) (json.RawMessage, []runtime.Message, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	r.calls++
+	if r.calls == 1 {
+		return nil, nil, fmt.Errorf("trace timed out after retries: %w", runtime.ErrCommandTimeout)
+	}
+	raw := json.RawMessage(`{
+		"function_info":{
+			"func_name":"second",
+			"file_path":"src/second.c",
+			"start_line":20,
+			"end_line":30,
+			"code_snippet":"void second() {}"
+		},
+		"code_logic":"second completed",
+		"code_map":[],
+		"exploit_results":[]
+	}`)
+	return raw, []runtime.Message{{Role: "assistant", Content: string(raw)}}, nil
 }
 
 func traceResultForTest(funcName string) models.TraceResult {

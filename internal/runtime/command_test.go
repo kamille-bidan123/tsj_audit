@@ -204,6 +204,48 @@ printf '%s\n' '{"type":"result","is_error":false,"result":"{\"ok\":true}"}'
 	}
 }
 
+func TestCommandRuntimeRetriesKilledWithoutOutput(t *testing.T) {
+	dir := t.TempDir()
+	claudePath := filepath.Join(dir, "claude")
+	countPath := filepath.Join(dir, "count")
+	script := `#!/bin/sh
+count_file="` + countPath + `"
+count=0
+if [ -f "$count_file" ]; then
+  count="$(cat "$count_file")"
+fi
+count=$((count + 1))
+printf '%s' "$count" > "$count_file"
+if [ "$count" -eq 1 ]; then
+  kill -9 $$
+fi
+printf '%s\n' '{"type":"result","is_error":false,"structured_output":{"ok":true}}'
+`
+	if err := os.WriteFile(claudePath, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	oldPath := os.Getenv("PATH")
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+oldPath)
+
+	raw, _, err := Command{Name: "claudecode", RequestRetries: 1}.RunJSON(context.Background(), RunJSONRequest{
+		StageName:  "Trace",
+		UserPrompt: "return json",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != `{"ok":true}` {
+		t.Fatalf("raw = %s", raw)
+	}
+	countData, err := os.ReadFile(countPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(countData) != "2" {
+		t.Fatalf("claude calls = %s", countData)
+	}
+}
+
 func TestCommandRuntimePassesJSONSchemaToClaudeCode(t *testing.T) {
 	dir := t.TempDir()
 	claudePath := filepath.Join(dir, "claude")
