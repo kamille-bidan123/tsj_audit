@@ -30,11 +30,11 @@ func (c Command) RunJSON(ctx context.Context, req RunJSONRequest) (json.RawMessa
 		if err == nil {
 			return raw, messages, nil
 		}
-		if !isRetryableCommandRuntimeError(err) || attempt == attempts {
+		if !c.shouldRetryRunJSONError(err) || attempt == attempts {
 			return nil, nil, err
 		}
 		if req.Status != nil {
-			req.Status.LogForFunction(req.EntryKey, fmt.Sprintf("[%s] %s returned malformed JSON on attempt %d/%d; retrying: %v", c.Name, req.StageName, attempt, attempts, err))
+			req.Status.LogForFunction(req.EntryKey, fmt.Sprintf("[%s] %s failed on attempt %d/%d; retrying: %v", c.Name, req.StageName, attempt, attempts, err))
 		}
 		if err := sleepBeforeCommandRetry(ctx, attempt); err != nil {
 			return nil, nil, err
@@ -308,7 +308,13 @@ func claudeCodeErrorMessage(wrapper claudeCodeWrapper, raw []byte) string {
 	return string(bytes.TrimSpace(raw))
 }
 
-func isRetryableCommandRuntimeError(err error) bool {
+func (c Command) shouldRetryRunJSONError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if c.Name == "claudecode" {
+		return true
+	}
 	return IsSkippableRuntimeError(err)
 }
 

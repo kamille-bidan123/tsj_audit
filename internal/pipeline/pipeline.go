@@ -627,11 +627,12 @@ func runAuditWithMalformedRetry(ctx context.Context, client runtime.Client, stor
 		if err := json.Unmarshal(raw, &output); err != nil {
 			return models.AuditOutput{}, err
 		}
-		if !isCodeContextOnlyAuditOutput(raw, output) {
+		malformedReason := auditOutputMalformedReason(raw, output)
+		if malformedReason == "" {
 			return output, nil
 		}
 		if attempt == maxAttempts {
-			message := fmt.Sprintf("audit %s returned code context without structured vulnerability verdict after %d attempts", auditType, maxAttempts)
+			message := fmt.Sprintf("audit %s %s after %d attempts", auditType, malformedReason, maxAttempts)
 			state.LogForFunction(entryKey, "audit error: "+message)
 			return models.AuditOutput{
 				IsVulnerable: false,
@@ -641,10 +642,36 @@ func runAuditWithMalformedRetry(ctx context.Context, client runtime.Client, stor
 				Findings:     []models.AuditFindingOutput{},
 			}, nil
 		}
-		state.LogForFunction(entryKey, "retrying audit after malformed code-context-only output: "+functionName+" / "+auditType)
-		promptText = auditPrompt + "\n\n上一次响应只返回了 CodeContext 对象，缺少 is_vulnerable、confidence、description、summary、findings 等审计结论字段。请重试，并且必须返回完整 AuditOutput JSON 对象；不要返回函数级 code_map 条目，漏洞证据必须放在 findings[].primary_location 和 findings[].data_flows[].steps[] 中。"
+		state.LogForFunction(entryKey, "retrying audit after malformed output: "+functionName+" / "+auditType+" / "+malformedReason)
+		promptText = auditPrompt + "\n\n上一次响应不符合 AuditOutput 要求：" + malformedReason + "。请重试，并且必须返回完整 AuditOutput JSON 对象；无漏洞时也必须填写非空 confidence 和 description 或 summary；有漏洞 findings 时，每个 finding 必须填写非空 confidence，并填写 description 或 title。不要返回函数级 code_map 条目，漏洞证据必须放在 findings[].primary_location 和 findings[].data_flows[].steps[] 中。"
 	}
 	return models.AuditOutput{}, fmt.Errorf("audit %s retry loop exhausted", auditType)
+}
+
+func auditOutputMalformedReason(raw json.RawMessage, output models.AuditOutput) string {
+	if isCodeContextOnlyAuditOutput(raw, output) {
+		return "returned code context without structured vulnerability verdict"
+	}
+	if len(output.Findings) > 0 {
+		for index, finding := range output.Findings {
+			description := finding.Description
+			if description == "" {
+				description = finding.Title
+			}
+			if description == "" || finding.Confidence == "" {
+				return fmt.Sprintf("finding %d returned empty description or confidence", index+1)
+			}
+		}
+		return ""
+	}
+	description := output.Description
+	if description == "" {
+		description = output.Summary
+	}
+	if description == "" || output.Confidence == "" {
+		return "returned empty description or confidence"
+	}
+	return ""
 }
 
 func isCodeContextOnlyAuditOutput(raw json.RawMessage, output models.AuditOutput) bool {

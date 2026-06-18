@@ -406,7 +406,7 @@ func TestRunCallsAuditForConfiguredAuditTypes(t *testing.T) {
 	}
 }
 
-func TestRunRejectsEmptyAuditDescription(t *testing.T) {
+func TestRunRecordsAuditErrorAfterRepeatedEmptyAuditDescription(t *testing.T) {
 	dir := t.TempDir()
 	entryPath := filepath.Join(dir, "entries.json")
 	entryJSON := `[{"func_name":"handle_request","file_path":"src/http.c","start_line":10}]`
@@ -415,8 +415,18 @@ func TestRunRejectsEmptyAuditDescription(t *testing.T) {
 	}
 
 	outputDir := filepath.Join(dir, "output")
-	client := runtime.NewMock(map[string]json.RawMessage{
-		"Trace": json.RawMessage(`{
+	malformed := json.RawMessage(`{
+		"is_vulnerable":false,
+		"confidence":"",
+		"description":"",
+		"summary":"",
+		"recommendation":null,
+		"code_map":[],
+		"findings":[]
+	}`)
+	client := runtime.NewMockWithSequences(map[string][]json.RawMessage{
+		"Trace": {
+			json.RawMessage(`{
 			"function_info":{
 				"func_name":"handle_request",
 				"file_path":"src/http.c",
@@ -428,15 +438,8 @@ func TestRunRejectsEmptyAuditDescription(t *testing.T) {
 			"code_map":[],
 			"exploit_results":[]
 		}`),
-		"Audit:password_reset": json.RawMessage(`{
-			"is_vulnerable":false,
-			"confidence":"",
-			"description":"",
-			"summary":"",
-			"recommendation":null,
-			"code_map":[],
-			"findings":[]
-		}`),
+		},
+		"Audit:password_reset": {malformed, malformed, malformed},
 	})
 
 	err := Run(context.Background(), Options{
@@ -450,8 +453,22 @@ func TestRunRejectsEmptyAuditDescription(t *testing.T) {
 		Status:      status.New(),
 		Checkpoints: checkpoint.Store{OutputDir: outputDir},
 	})
-	if err == nil || !strings.Contains(err.Error(), "empty description or confidence") {
-		t.Fatalf("err = %v", err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.Calls("Audit:password_reset") != 3 {
+		t.Fatalf("Audit:password_reset calls = %d", client.Calls("Audit:password_reset"))
+	}
+	loaded, ok, err := checkpoint.Store{OutputDir: outputDir}.Load("src/http.c:10:handle_request")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || len(loaded.AuditOutputs) != 1 {
+		t.Fatalf("loaded = %#v ok=%v", loaded, ok)
+	}
+	result := loaded.AuditOutputs[0].Output
+	if result.Confidence != "error" || !strings.Contains(result.Description, "returned empty description or confidence after 3 attempts") {
+		t.Fatalf("audit output = %#v", result)
 	}
 }
 
