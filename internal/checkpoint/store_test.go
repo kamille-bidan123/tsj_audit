@@ -184,3 +184,45 @@ func TestSaveConversationWritesFunctionTranscript(t *testing.T) {
 		t.Fatalf("conversation = %#v", got)
 	}
 }
+
+func TestSaveConversationOmitsEmptyRawMessages(t *testing.T) {
+	store := Store{OutputDir: t.TempDir()}
+	entry := ConversationEntry{
+		Time:      "2026-06-04T00:00:00Z",
+		EntryKey:  "src/http.c:10:handle",
+		StageName: "Trace",
+		Request: ConversationRequest{
+			UserPrompt: `{"func_name":"handle"}`,
+			Schema:     json.RawMessage(" \n"),
+		},
+		Response: ConversationResponse{
+			Raw:     json.RawMessage(" \n"),
+			Payload: json.RawMessage(" \n"),
+		},
+		Error: "claudecode runtime failed",
+	}
+
+	path, err := store.SaveConversation(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]interface{}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	request := raw["request"].(map[string]interface{})
+	if _, ok := request["schema"]; ok {
+		t.Fatalf("schema should be omitted from %s", data)
+	}
+	response := raw["response"].(map[string]interface{})
+	if _, ok := response["raw"]; ok {
+		t.Fatalf("raw should be omitted from %s", data)
+	}
+	if _, ok := response["payload"]; ok {
+		t.Fatalf("payload should be omitted from %s", data)
+	}
+}

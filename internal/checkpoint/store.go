@@ -1,6 +1,7 @@
 package checkpoint
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -142,6 +143,7 @@ func (s Store) SaveConversation(entry ConversationEntry) (string, error) {
 	if entry.EntryKey == "" {
 		return "", nil
 	}
+	normalizeConversationRawMessages(&entry)
 	dir := filepath.Join(s.OutputDir, "checkpoints", "conversations", safeName(entry.EntryKey))
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return "", err
@@ -160,6 +162,19 @@ func (s Store) SaveConversation(entry ConversationEntry) (string, error) {
 		return "", err
 	}
 	return path, os.WriteFile(path, data, 0644)
+}
+
+func normalizeConversationRawMessages(entry *ConversationEntry) {
+	entry.Request.Schema = normalizeRawMessage(entry.Request.Schema)
+	entry.Response.Raw = normalizeRawMessage(entry.Response.Raw)
+	entry.Response.Payload = normalizeRawMessage(entry.Response.Payload)
+}
+
+func normalizeRawMessage(value json.RawMessage) json.RawMessage {
+	if len(bytes.TrimSpace(value)) == 0 {
+		return nil
+	}
+	return value
 }
 
 func (s Store) checkpointFile(key string) string {
